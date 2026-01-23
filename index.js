@@ -30,7 +30,7 @@ function generateKey() {
 }
 
 // === Администраторы ===
-const ADMIN_IDS = [7660364996] // Замените на реальные ID админов
+const ADMIN_IDS = [7660364996, 8050370935] // Замените на реальные ID админов
 
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
