@@ -1,21 +1,20 @@
 {
-  "name": "telegram-bot",
+  "name": "nodejs",
   "version": "1.0.0",
-  "description": "Telegram Bot for Scalingo",
+  "description": "",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "test": "echo \"No tests specified\" && exit 0"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "engines": {
-    "node": "18.x"
-  },
-  "dependencies": {
-    "node-telegram-bot-api": "^0.66.0",
-    "@supabase/supabase-js": "^2.39.0",
-    "dotenv": "^16.3.1"
-  },
-  "keywords": ["telegram", "bot", "scalingo"],
+  "keywords": [],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.90.1",
+    "@types/node": "^22.13.11",
+    "body-parser": "^2.2.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "node-telegram-bot-api": "^0.67.0"
+  }
 }
