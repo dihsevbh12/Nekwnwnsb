@@ -104,7 +104,7 @@ function showMainMenu(chatId) {
         [
           {
             text: 'Наш канал',
-            url: 'https://t.me/your_channel' // Замените на ваш канал
+            url: 'https://t.me/mr_helpers' // Замените на ваш канал
           }
         ],
         [
