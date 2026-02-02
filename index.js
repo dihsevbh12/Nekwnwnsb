@@ -1,10 +1,11 @@
 import TelegramBot from 'node-telegram-bot-api'
 import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
-import crypto from 'crypto'
+import express from 'express'
+import cors from 'cors'
+import bodyParser from 'body-parser'
 
 dotenv.config()
-
 
 // === Supabase ===
 const supabase = createClient(
@@ -12,10 +13,30 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 )
 
-// === Telegram ===
+// === Telegram Bot ===
 const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
   polling: true
 })
+
+// === Express Server (Для API Web App) ===
+const app = express()
+app.use(cors())
+app.use(bodyParser.json())
+
+const PORT = process.env.PORT || 3000
+
+// === Администраторы ===
+const ADMIN_IDS = [7660364996, 8050370935]
+
+// === Цены в Звездах ===
+const STARS_PRICES = {
+  new: { 15: 150, 30: 355, 365: 2820 },
+  renew: { 15: 220, 30: 425, 365: 3525 }
+}
+
+// === Rate Limiting для Telegram API ===
+let rateLimitDelay = 0
+let isProcessing = false
 
 console.log('🤖 Bot started')
 
@@ -29,9 +50,6 @@ function generateKey() {
   return key
 }
 
-// === Администраторы ===
-const ADMIN_IDS = [7660364996, 8050370935] // Замените на реальные ID админов
-
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
@@ -42,14 +60,13 @@ async function registerUser(msg) {
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
-    // Проверяем, есть ли пользователь в базе
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id')
       .eq('idtg', userId)
       .single()
 
-    if (checkError && checkError.code !== 'PGRST116') { // PGRST116 = not found
+    if (checkError && checkError.code !== 'PGRST116') {
       console.error('Error checking user:', checkError)
       return false
     }
@@ -59,10 +76,8 @@ async function registerUser(msg) {
       return true
     }
 
-    // Генерируем ключ
     const key = generateKey()
 
-    // Создаем нового пользователя
     const { error: insertError } = await supabase
       .from('users')
       .insert({
@@ -98,13 +113,13 @@ function showMainMenu(chatId) {
         [
           {
             text: 'Открыть приложение',
-            web_app: { url: 'https://rogers1234556.github.io/Modele-/' } // Замените на ваш URL
+            web_app: { url: 'https://rogers1234556.github.io/Modele-/' }
           }
         ],
         [
           {
             text: 'Наш канал',
-            url: 'https://t.me/mr_helpers' // Замените на ваш канал
+            url: 'https://t.me/mr_helpers'
           }
         ],
         [
@@ -139,7 +154,7 @@ function showSupportMenu(chatId) {
         ],
         [
           {
-            text: 'Проблемы с Helper’ом',
+            text: 'Проблемы с Helper\'ом',
             callback_data: 'support_helper'
           }
         ],
@@ -168,6 +183,60 @@ function showSupportMenu(chatId) {
   })
 }
 
+// ==========================================
+// API Endpoint для создания инвойса
+// ==========================================
+app.post('/api/create-stars-invoice', async (req, res) => {
+  try {
+    const { plan, isRenewal, userId } = req.body
+
+    if (!plan || !userId) {
+      return res.status(400).json({ success: false, message: 'Invalid data' })
+    }
+
+    const type = isRenewal ? 'renew' : 'new'
+    const price = STARS_PRICES[type]?.[plan]
+
+    if (!price) {
+      return res.status(400).json({ success: false, message: 'Invalid plan' })
+    }
+
+    const title = `Подписка на ${plan} дней`
+    const description = isRenewal ? 'Продление доступа Government' : 'Покупка доступа Government'
+
+    const payload = JSON.stringify({
+      userId: userId,
+      plan: plan,
+      type: type,
+      isRenewal: isRenewal
+    })
+
+    const invoiceLink = await bot.createInvoiceLink(
+      title,
+      description,
+      payload,
+      "",
+      "XTR",
+      [{ label: title, amount: price }]
+    )
+
+    res.json({ success: true, invoiceUrl: invoiceLink })
+
+  } catch (error) {
+    console.error('Error creating invoice:', error)
+    res.status(500).json({ success: false, message: 'Server error' })
+  }
+})
+
+// ==========================================
+// Обработка Pre-Checkout (Обязательно для оплаты)
+// ==========================================
+bot.on('pre_checkout_query', async (query) => {
+  await bot.answerPreCheckoutQuery(query.id, true).catch(err => {
+    console.error('Pre-checkout error:', err)
+  })
+})
+
 // === Обработка команды /start ===
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id
@@ -176,11 +245,9 @@ bot.onText(/\/start/, async (msg) => {
   console.log(`/start command from ${userId}`)
 
   try {
-    // Регистрируем пользователя
     const registered = await registerUser(msg)
 
     if (registered) {
-      // Показываем главное меню
       showMainMenu(chatId)
     } else {
       await bot.sendMessage(chatId, 'Произошла ошибка при регистрации. Попробуйте позже.')
@@ -201,13 +268,11 @@ bot.on('callback_query', async (callbackQuery) => {
   console.log(`Callback from ${userId}: ${data}`)
 
   try {
-    // Удаляем предыдущее сообщение (опционально)
     await bot.deleteMessage(chatId, callbackQuery.message.message_id)
       .catch(err => console.log('Cannot delete message:', err.message))
 
     switch(data) {
       case 'support_request':
-        // Показываем меню поддержки
         showSupportMenu(chatId)
         break
 
@@ -216,7 +281,7 @@ bot.on('callback_query', async (callbackQuery) => {
         break
 
       case 'support_helper':
-        await handleSupportTopic(chatId, userId, 'Проблемы с Helper’ом')
+        await handleSupportTopic(chatId, userId, 'Проблемы с Helper\'ом')
         break
 
       case 'support_suggestions':
@@ -232,7 +297,6 @@ bot.on('callback_query', async (callbackQuery) => {
         showMainMenu(chatId)
     }
 
-    // Подтверждаем callback
     await bot.answerCallbackQuery(callbackQuery.id)
 
   } catch (error) {
@@ -243,7 +307,6 @@ bot.on('callback_query', async (callbackQuery) => {
 
 // === Обработка темы поддержки ===
 async function handleSupportTopic(chatId, userId, topic) {
-  // Сохраняем выбор темы
   await saveSupportChoice(chatId, userId, topic)
 
   const message = `Вы выбрали тему: *${topic}*\n\n` +
@@ -256,7 +319,6 @@ async function handleSupportTopic(chatId, userId, topic) {
 // === Сохранение выбора темы ===
 async function saveSupportChoice(chatId, userId, topic) {
   try {
-    // Получаем информацию о пользователе
     const { data: user, error } = await supabase
       .from('users')
       .select('telegram, name')
@@ -266,7 +328,6 @@ async function saveSupportChoice(chatId, userId, topic) {
     const username = user?.telegram || 'null'
     const fullName = user?.name || 'Пользователь'
 
-    // Сохраняем начальное сообщение поддержки
     const { error: insertError } = await supabase
       .from('support_messages')
       .insert({
@@ -276,13 +337,12 @@ async function saveSupportChoice(chatId, userId, topic) {
         username: username,
         full_name: fullName,
         sent_to_user: true,
-        topic: topic // Добавляем тему
+        topic: topic
       })
 
     if (insertError) {
       console.error('Error saving support choice:', insertError)
     } else {
-      // Отправляем уведомление админам
       await notifyAdminsAboutNewTicket(userId, username, fullName, topic)
     }
 
@@ -309,7 +369,6 @@ async function handleMediaMessage(msg, mediaType) {
   const fullName = `${msg.from.first_name || ''} ${msg.from.last_name || ''}`.trim()
 
   try {
-    // Проверяем, зарегистрирован ли пользователь
     const { data: user } = await supabase
       .from('users')
       .select('id')
@@ -324,11 +383,9 @@ async function handleMediaMessage(msg, mediaType) {
       return
     }
 
-    // Получаем информацию о файле
     let fileId, fileSize, fileName, mimeType, caption = ''
 
     if (mediaType === 'photo') {
-      // Берем последнюю (самую качественную) фото
       const photos = msg.photo
       const photo = photos[photos.length - 1]
       fileId = photo.file_id
@@ -344,10 +401,8 @@ async function handleMediaMessage(msg, mediaType) {
       caption = msg.caption || ''
     }
 
-    // Получаем direct ссылку на файл
     const fileLink = await bot.getFileLink(fileId)
 
-    // Сохраняем в базу данных
     const { error } = await supabase
       .from('support_messages')
       .insert({
@@ -372,7 +427,6 @@ async function handleMediaMessage(msg, mediaType) {
 
     console.log(`📸 ${mediaType} saved from ${userId}`)
 
-    // Отправляем уведомление админам
     const { data: lastTopic } = await supabase
       .from('support_messages')
       .select('topic')
@@ -385,7 +439,6 @@ async function handleMediaMessage(msg, mediaType) {
 
     const topic = lastTopic?.topic || 'Не указана'
 
-    // Уведомляем админов
     await notifyAdminsAboutMedia(userId, username, fullName, mediaType, caption, topic)
 
   } catch (error) {
@@ -439,14 +492,13 @@ async function checkAndSendAdminMessages() {
   try {
     console.log('🔍 Проверяем сообщения от админов для отправки пользователям...')
 
-    // Получаем сообщения от админов, которые еще не отправлены пользователям
     const { data: messages, error } = await supabase
       .from('support_messages')
       .select('*')
       .eq('sender', 'admin')
       .eq('sent_to_user', false)
       .order('created_at', { ascending: true })
-      .limit(5) // Увеличим лимит
+      .limit(5)
 
     if (error) {
       console.error('❌ Ошибка получения сообщений:', error)
@@ -462,10 +514,8 @@ async function checkAndSendAdminMessages() {
 
     for (const msg of messages) {
       try {
-        // Проверяем, что сообщение не пустое
         if (!msg.message && !msg.media_type) {
           console.log(`⚠️ Пропускаем пустое сообщение ID: ${msg.id}`)
-          // Помечаем как отправленное
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
@@ -473,7 +523,6 @@ async function checkAndSendAdminMessages() {
           continue
         }
 
-        // Ждем если есть rate limit
         if (rateLimitDelay > 0) {
           console.log(`⏳ Rate limit delay: ${rateLimitDelay}s`)
           await new Promise(resolve => setTimeout(resolve, rateLimitDelay * 1000))
@@ -486,15 +535,12 @@ async function checkAndSendAdminMessages() {
           messagePreview: msg.message ? msg.message.substring(0, 50) + '...' : 'нет текста'
         })
 
-        // Отправляем сообщение пользователю
         let sentSuccessfully = false
 
         if (msg.media_type && msg.file_url) {
-          // Отправляем медиа
           await sendMediaToUser(msg)
           sentSuccessfully = true
         } else if (msg.message && msg.message.trim()) {
-          // Отправляем текстовое сообщение
           const messageText = msg.message.trim()
           await bot.sendMessage(msg.chat_id, messageText, {
             parse_mode: 'Markdown'
@@ -502,7 +548,6 @@ async function checkAndSendAdminMessages() {
           sentSuccessfully = true
         }
 
-        // Помечаем как отправленное если успешно
         if (sentSuccessfully) {
           const { error: updateError } = await supabase
             .from('support_messages')
@@ -519,7 +564,6 @@ async function checkAndSendAdminMessages() {
           }
         }
 
-        // Задержка между сообщениями
         await new Promise(resolve => setTimeout(resolve, 1000))
 
       } catch (telegramError) {
@@ -529,24 +573,20 @@ async function checkAndSendAdminMessages() {
           statusCode: telegramError.response?.statusCode
         })
 
-        // Обработка rate limiting
         if (telegramError.response?.statusCode === 429) {
           rateLimitDelay = telegramError.response.body?.parameters?.retry_after || 20
           console.log(`⚠️ Rate limit! Ждем ${rateLimitDelay}s`)
           break
         }
 
-        // Если пользователь заблокировал бота
         if (telegramError.response?.statusCode === 403) {
           console.log(`❌ Пользователь ${msg.chat_id} заблокировал бота`)
-          // Помечаем как отправленное чтобы не пытаться снова
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
             .eq('id', msg.id)
         } else if (telegramError.response?.statusCode === 400) {
           console.log(`⚠️ Bad Request для ${msg.chat_id}:`, telegramError.response.body)
-          // Помечаем как отправленное если ошибка 400
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
@@ -580,7 +620,6 @@ async function sendMediaToUser(msg) {
       })
     }
   } catch (error) {
-    // Если файл недоступен, отправляем текстовое сообщение
     if (error.code === 'ETELEGRAM' || error.response?.statusCode === 400) {
       await bot.sendMessage(chatId, 
         `[Медиа-файл]\n${caption}`,
@@ -592,10 +631,80 @@ async function sendMediaToUser(msg) {
   }
 }
 
-// === Получение текстовых сообщений (для поддержки) ===
+// === Основной обработчик сообщений (объединенный) ===
 bot.on('message', async (msg) => {
-  // Игнорируем команды и служебные сообщения
+  // Обработка успешного платежа
+  if (msg.successful_payment) {
+    const payment = msg.successful_payment
+    const currency = payment.currency
+    const amount = payment.total_amount
+
+    let payloadData
+    try {
+      payloadData = JSON.parse(payment.invoice_payload)
+    } catch (e) {
+      console.error('Error parsing payload', e)
+      return
+    }
+
+    const { userId, plan, isRenewal } = payloadData
+
+    console.log(`💰 Payment received: User ${userId}, Plan ${plan} days, Amount ${amount} ${currency}`)
+
+    try {
+      const { data: userData, error: fetchError } = await supabase
+        .from('users')
+        .select('daysgov')
+        .eq('idtg', userId)
+        .single()
+
+      if (fetchError) throw fetchError
+
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+
+      let startDate = today
+      if (userData && userData.daysgov) {
+        const currentExpiry = new Date(userData.daysgov)
+        if (currentExpiry > today) {
+          startDate = currentExpiry
+        }
+      }
+
+      const newDate = new Date(startDate)
+      newDate.setDate(newDate.getDate() + parseInt(plan))
+      const newExpiryString = newDate.toISOString().split('T')[0]
+
+      const { error: updateError } = await supabase
+        .from('users')
+        .update({ 
+          daysgov: newExpiryString,
+          buykov: amount,
+          status: 'active'
+        })
+        .eq('idtg', userId)
+
+      if (updateError) throw updateError
+
+      await bot.sendMessage(msg.chat.id, 
+        `✅ *Оплата прошла успешно!*\n\nВаша подписка продлена на *${plan} дней*.\nДействует до: ${new Date(newExpiryString).toLocaleDateString('ru-RU')}`, 
+        { parse_mode: 'Markdown' }
+      )
+
+      for (const adminId of ADMIN_IDS) {
+        bot.sendMessage(adminId, `💰 *Новая продажа (Stars)*\nUser ID: ${userId}\nPlan: ${plan} days\nAmount: ${amount} XTR`, { parse_mode: 'Markdown' })
+      }
+
+    } catch (error) {
+      console.error('Database update error after payment:', error)
+      await bot.sendMessage(msg.chat.id, '⚠️ Оплата прошла, но возникла ошибка при активации. Пожалуйста, напишите в поддержку.')
+    }
+    return
+  }
+
+  // Игнорируем команды, фото и документы (они обрабатываются отдельно)
   if (msg.text?.startsWith('/')) return
+  if (msg.photo || msg.document) return
 
   const chatId = msg.chat.id
   const text = msg.text || ''
@@ -606,7 +715,6 @@ bot.on('message', async (msg) => {
   if (!text) return
 
   try {
-    // Проверяем, зарегистрирован ли пользователь
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id')
@@ -620,7 +728,6 @@ bot.on('message', async (msg) => {
     }
 
     if (!user) {
-      // Пользователь не зарегистрирован - предлагаем /start
       await bot.sendMessage(chatId, 
         'Для использования поддержки необходимо зарегистрироваться.\n' +
         'Нажмите /start для регистрации.'
@@ -628,8 +735,6 @@ bot.on('message', async (msg) => {
       return
     }
 
-    // Сохраняем сообщение в поддержку
-    // Сохраняем сообщение в поддержку
     const { data: insertedData, error } = await supabase
       .from('support_messages')
       .insert({
@@ -640,7 +745,7 @@ bot.on('message', async (msg) => {
         full_name: fullName,
         sent_to_user: true
       })
-      .select()  // Получаем ВСЕ поля
+      .select()
 
     if (error) {
       console.error('Error saving support message:', error)
@@ -650,7 +755,6 @@ bot.on('message', async (msg) => {
 
     console.log(`📥 Support message from ${userId} saved`)
 
-    // Получаем тему из последнего сообщения этого пользователя
     const { data: lastTopic } = await supabase
       .from('support_messages')
       .select('topic')
@@ -663,10 +767,7 @@ bot.on('message', async (msg) => {
 
     const topic = lastTopic?.topic || 'Не указана'
 
-    // Отправляем уведомление админам о новом сообщении
     await notifyAdminsAboutNewMessage(userId, username, fullName, text, topic)
-
-    
 
   } catch (error) {
     console.error('Error processing message:', error)
@@ -674,16 +775,10 @@ bot.on('message', async (msg) => {
   }
 })
 
-// === Rate Limiting для Telegram API ===
-let rateLimitDelay = 0
-let isProcessing = false
-
 // === Уведомление админов о новом сообщении ===
 async function notifyAdminsAboutNewMessage(userId, username, fullName, messageText, topic = 'Не указана') {
   try {
-    // Убираем * из username
     const safeUsername = username.replace(/\*/g, '')
-    // Экранируем специальные символы Markdown в сообщении
     const safeMessage = messageText
       .replace(/\*/g, '\\*')
       .replace(/_/g, '\\_')
@@ -701,12 +796,10 @@ async function notifyAdminsAboutNewMessage(userId, username, fullName, messageTe
       `${truncatedMessage}\n` +
       `${new Date().toLocaleString('ru-RU')}`
 
-    // Отправляем каждому админу
     for (const adminId of ADMIN_IDS) {
       try {
         await bot.sendMessage(adminId, message, { parse_mode: 'Markdown' })
       } catch (error) {
-        // Если ошибка парсинга Markdown, отправляем без форматирования
         if (error.response?.body?.description?.includes('parse entities')) {
           const plainMessage = message.replace(/\*/g, '')
           await bot.sendMessage(adminId, plainMessage)
@@ -714,17 +807,16 @@ async function notifyAdminsAboutNewMessage(userId, username, fullName, messageTe
           console.error(`Ошибка отправки админу ${adminId}:`, error.message)
         }
       }
-      // Небольшая задержка между отправками
       await new Promise(resolve => setTimeout(resolve, 500))
     }
   } catch (error) {
     console.error('Error in notifyAdminsAboutNewMessage:', error)
   }
 }
+
 // === Уведомление админов о новой заявке ===
 async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
   try {
-    // Убираем * из username, если он содержит специальные символы
     const safeUsername = username.replace(/\*/g, '')
 
     const message = `*Новое сообщения*\n\n` +
@@ -734,13 +826,11 @@ async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
       `${topic}\n` +
       `${new Date().toLocaleString('ru-RU')}`
 
-    // Отправляем каждому админу
     for (const adminId of ADMIN_IDS) {
       try {
         await bot.sendMessage(adminId, message, { parse_mode: 'Markdown' })
         console.log(`✅ Уведомление отправлено админу ${adminId}`)
       } catch (error) {
-        // Если ошибка парсинга Markdown, отправляем без форматирования
         if (error.response?.body?.description?.includes('parse entities')) {
           const plainMessage = message.replace(/\*/g, '')
           await bot.sendMessage(adminId, plainMessage)
@@ -749,7 +839,6 @@ async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
           console.error(`Ошибка отправки админу ${adminId}:`, error.message)
         }
       }
-      // Небольшая задержка между отправками
       await new Promise(resolve => setTimeout(resolve, 500))
     }
   } catch (error) {
@@ -760,7 +849,6 @@ async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
 // === Периодическая проверка ответов администраторов ===
 setInterval(checkAndSendAdminMessages, 5000)
 console.log('⏰ Started message polling every 5 seconds')
-
 
 // === Обработка ошибок бота ===
 bot.on('polling_error', (error) => {
@@ -776,6 +864,11 @@ process.on('SIGINT', () => {
   console.log('Shutting down bot...')
   bot.stopPolling()
   process.exit()
+})
+
+// === Запускаем Express сервер ===
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🌍 API Server running on port ${PORT}`)
 })
 
 console.log('✅ Bot is ready and waiting for messages')
