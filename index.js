@@ -30,8 +30,8 @@ const ADMIN_IDS = [7660364996, 8050370935]
 
 // === Цены в Звездах ===
 const STARS_PRICES = {
-  new: { 15: 117, 30: 294, 365: 2358 },
-  renew: { 15: 176, 30: 352, 365: 2948 }
+  new: { 15: 150, 30: 355, 365: 2820 },
+  renew: { 15: 220, 30: 425, 365: 3525 }
 }
 
 // === Rate Limiting для Telegram API ===
@@ -227,7 +227,55 @@ app.post('/api/create-stars-invoice', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' })
   }
 })
+// ==========================================
+// API: CryptoBot invoice
+// ==========================================
+app.post('/api/create-crypto-invoice', async (req, res) => {
+  try {
+    const { plan, isRenewal, userId, amount } = req.body
 
+    if (!plan || !userId || !amount) {
+      return res.status(400).json({ ok: false, message: 'Invalid data' })
+    }
+
+    // CryptoBot ТРЕБУЕТ строку
+    const amountString = Number(amount)
+      .toFixed(2)
+      .replace(/\.?0+$/, '')
+
+    const response = await fetch(
+      'https://pay.crypt.bot/api/createInvoice',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
+        },
+        body: JSON.stringify({
+          asset: 'USDT',
+          amount: amountString,
+          description: `Подписка на ${plan} дней`,
+          payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
+          allow_anonymous: false,
+          expires_in: 900
+        })
+      }
+    )
+
+    const data = await response.json()
+
+    if (!data.ok) {
+      console.error('CryptoBot error:', data)
+      return res.status(400).json(data)
+    }
+
+    res.json(data)
+
+  } catch (err) {
+    console.error('Crypto invoice error:', err)
+    res.status(500).json({ ok: false, message: 'Server error' })
+  }
+})
 // ==========================================
 // Обработка Pre-Checkout (Обязательно для оплаты)
 // ==========================================
