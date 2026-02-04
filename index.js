@@ -201,6 +201,7 @@ function showSupportMenu(chatId) {
 // API Endpoint для создания инвойса
 // ==========================================
 app.post('/api/create-stars-invoice', async (req, res) => {
+  console.log('🔐 TOKEN exists:', !!process.env.CRYPTO_BOT_TOKEN)
   try {
     const { plan, isRenewal, userId } = req.body
 
@@ -262,10 +263,13 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
 
     // CryptoBot не любит много нулей, но любит строки
     const amountString = price.toString();
-
-    // ВАЖНО: Проверьте, какой у вас токен (Mainnet или Testnet)
-    // Если токен Testnet (начинается на test-), URL должен быть: https://testnet-pay.crypt.bot/api/createInvoice
-    // Если токен Mainnet, URL: https://pay.crypt.bot/api/createInvoice
+    if (!process.env.CRYPTO_BOT_TOKEN) {
+      console.error('❌ CRYPTO_BOT_TOKEN is undefined')
+      return res.status(500).json({
+        ok: false,
+        description: 'CryptoBot token not configured on server'
+      })
+    }
     const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.startsWith('test') 
         ? 'https://testnet-pay.crypt.bot/api/createInvoice'
         : 'https://pay.crypt.bot/api/createInvoice';
