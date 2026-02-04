@@ -245,6 +245,7 @@ app.post('/api/create-stars-invoice', async (req, res) => {
 // API: CryptoBot invoice (СОЗДАНИЕ)
 // ==========================================
 app.post('/api/create-crypto-invoice', async (req, res) => {
+  console.log('📥 /create-crypto-invoice', req.body)
   try {
     const { plan, isRenewal, userId } = req.body
 
