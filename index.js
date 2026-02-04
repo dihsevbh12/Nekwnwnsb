@@ -241,7 +241,7 @@ app.post('/api/create-stars-invoice', async (req, res) => {
   }
 })
 // ==========================================
-// API: CryptoBot invoice
+// API: CryptoBot invoice (СОЗДАНИЕ)
 // ==========================================
 app.post('/api/create-crypto-invoice', async (req, res) => {
   try {
@@ -258,18 +258,26 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Invalid plan' })
     }
 
-    const amountString = price
-      .toFixed(2)
-      .replace(/\.?0+$/, '')
+    // CryptoBot не любит много нулей, но любит строки
+    const amountString = price.toString();
 
-    const response = await fetch('https://pay.crypt.bot/api/createInvoice', {
+    // ВАЖНО: Проверьте, какой у вас токен (Mainnet или Testnet)
+    // Если токен Testnet (начинается на test-), URL должен быть: https://testnet-pay.crypt.bot/api/createInvoice
+    // Если токен Mainnet, URL: https://pay.crypt.bot/api/createInvoice
+    const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.startsWith('test') 
+        ? 'https://testnet-pay.crypt.bot/api/createInvoice'
+        : 'https://pay.crypt.bot/api/createInvoice';
+
+    console.log(`Creating invoice for ${userId} via ${CRYPTO_API_URL}`);
+
+    const response = await fetch(CRYPTO_API_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
       },
       body: JSON.stringify({
-        asset: 'USDT',
+        asset: 'USDT', // Убедитесь, что в приложении CryptoBot включен кошелек USDT
         amount: amountString,
         description: `Подписка на ${plan} дней`,
         payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
@@ -280,17 +288,55 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
 
     const data = await response.json()
 
+    // ЛОГИРУЕМ ОШИБКУ, ЕСЛИ ОНА ЕСТЬ
     if (!data.ok) {
-      return res.status(400).json(data)
+      console.error('❌ CryptoBot Error:', JSON.stringify(data));
+      // Возвращаем описание ошибки на фронтенд
+      return res.status(400).json({ 
+        ok: false, 
+        description: data.error?.name || 'CryptoBot API Error' 
+      });
     }
 
     res.json(data)
 
   } catch (err) {
     console.error('Crypto invoice error:', err)
-    res.status(500).json({ ok: false })
+    res.status(500).json({ ok: false, description: 'Internal Server Error' })
   }
 })
+
+// ==========================================
+// API: Проверка статуса (НОВЫЙ МЕТОД)
+// ==========================================
+app.post('/api/check-crypto-status', async (req, res) => {
+    try {
+        const { invoiceId } = req.body;
+
+        const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.startsWith('test') 
+        ? 'https://testnet-pay.crypt.bot/api/getInvoices'
+        : 'https://pay.crypt.bot/api/getInvoices';
+
+        const response = await fetch(CRYPTO_API_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
+            },
+            body: JSON.stringify({
+                invoice_ids: invoiceId
+            })
+        });
+
+        const data = await response.json();
+        res.json(data);
+
+    } catch (error) {
+        console.error('Check status error:', error);
+        res.status(500).json({ ok: false });
+    }
+});
+
 // ==========================================
 // Обработка Pre-Checkout (Обязательно для оплаты)
 // ==========================================
