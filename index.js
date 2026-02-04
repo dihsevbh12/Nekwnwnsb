@@ -34,6 +34,19 @@ const STARS_PRICES = {
   renew: { 15: 220, 30: 425, 365: 3525 }
 }
 
+const CRYPTO_PRICES = {
+  new: {
+    15: 2.30,
+    30: 5.90,
+    365: 47.30
+  },
+  renew: {
+    15: 3.50,
+    30: 7.00,
+    365: 59.00
+  }
+}
+
 // === Rate Limiting для Telegram API ===
 let rateLimitDelay = 0
 let isProcessing = false
@@ -232,40 +245,42 @@ app.post('/api/create-stars-invoice', async (req, res) => {
 // ==========================================
 app.post('/api/create-crypto-invoice', async (req, res) => {
   try {
-    const { plan, isRenewal, userId, amount } = req.body
+    const { plan, isRenewal, userId } = req.body
 
-    if (!plan || !userId || !amount) {
+    if (!plan || !userId) {
       return res.status(400).json({ ok: false, message: 'Invalid data' })
     }
 
-    // CryptoBot ТРЕБУЕТ строку
-    const amountString = Number(amount)
+    const type = isRenewal ? 'renew' : 'new'
+    const price = CRYPTO_PRICES[type]?.[plan]
+
+    if (!price) {
+      return res.status(400).json({ ok: false, message: 'Invalid plan' })
+    }
+
+    const amountString = price
       .toFixed(2)
       .replace(/\.?0+$/, '')
 
-    const response = await fetch(
-      'https://pay.crypt.bot/api/createInvoice',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
-        },
-        body: JSON.stringify({
-          asset: 'USDT',
-          amount: amountString,
-          description: `Подписка на ${plan} дней`,
-          payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
-          allow_anonymous: false,
-          expires_in: 900
-        })
-      }
-    )
+    const response = await fetch('https://pay.crypt.bot/api/createInvoice', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
+      },
+      body: JSON.stringify({
+        asset: 'USDT',
+        amount: amountString,
+        description: `Подписка на ${plan} дней`,
+        payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
+        allow_anonymous: false,
+        expires_in: 900
+      })
+    })
 
     const data = await response.json()
 
     if (!data.ok) {
-      console.error('CryptoBot error:', data)
       return res.status(400).json(data)
     }
 
@@ -273,7 +288,7 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
 
   } catch (err) {
     console.error('Crypto invoice error:', err)
-    res.status(500).json({ ok: false, message: 'Server error' })
+    res.status(500).json({ ok: false })
   }
 })
 // ==========================================
