@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import dotenv from 'dotenv'
 import express from 'express'
 import cors from 'cors'
-import bodyParser from 'body-parser'
+import fetch from 'node-fetch'
 
 dotenv.config()
 
@@ -21,7 +21,8 @@ const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN, {
 // === Express Server (Для API Web App) ===
 const app = express()
 app.use(cors())
-app.use(bodyParser.json())
+app.use(express.json())
+app.use(express.urlencoded({ extended: true }))
 
 const PORT = process.env.PORT || 3000
 
