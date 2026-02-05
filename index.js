@@ -270,7 +270,7 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
         description: 'CryptoBot token not configured on server'
       })
     }
-    const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.startsWith('test') 
+    const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test') 
         ? 'https://testnet-pay.crypt.bot/api/createInvoice'
         : 'https://pay.crypt.bot/api/createInvoice';
 
@@ -319,7 +319,7 @@ app.post('/api/check-crypto-status', async (req, res) => {
     try {
         const { invoiceId } = req.body;
 
-        const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.startsWith('test') 
+        const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test') 
         ? 'https://testnet-pay.crypt.bot/api/getInvoices'
         : 'https://pay.crypt.bot/api/getInvoices';
 
