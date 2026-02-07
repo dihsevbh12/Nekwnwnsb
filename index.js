@@ -270,7 +270,7 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
         description: 'CryptoBot token not configured on server'
       })
     }
-    const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test') 
+    const CRYPTO_API_URL = (process.env.CRYPTO_BOT_TOKEN && process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test')) 
         ? 'https://testnet-pay.crypt.bot/api/createInvoice'
         : 'https://pay.crypt.bot/api/createInvoice';
 
@@ -319,7 +319,7 @@ app.post('/api/check-crypto-status', async (req, res) => {
     try {
         const { invoiceId } = req.body;
 
-        const CRYPTO_API_URL = process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test') 
+        const CRYPTO_API_URL = (process.env.CRYPTO_BOT_TOKEN && process.env.CRYPTO_BOT_TOKEN.toLowerCase().startsWith('test')) 
         ? 'https://testnet-pay.crypt.bot/api/getInvoices'
         : 'https://pay.crypt.bot/api/getInvoices';
 
@@ -352,8 +352,14 @@ bot.on('pre_checkout_query', async (query) => {
   })
 })
 
+// === Проверка на личные сообщения ===
+function isPrivateChat(msg) {
+  return msg && msg.chat && msg.chat.type === 'private'
+}
+
 // === Обработка команды /start ===
 bot.onText(/\/start/, async (msg) => {
+  if (!isPrivateChat(msg)) return
   const chatId = msg.chat.id
   const userId = msg.from.id
 
@@ -468,11 +474,13 @@ async function saveSupportChoice(chatId, userId, topic) {
 
 // === Обработка фото ===
 bot.on('photo', async (msg) => {
+  if (!isPrivateChat(msg)) return
   await handleMediaMessage(msg, 'photo')
 })
 
 // === Обработка документов ===
 bot.on('document', async (msg) => {
+  if (!isPrivateChat(msg)) return
   await handleMediaMessage(msg, 'document')
 })
 
@@ -748,6 +756,9 @@ async function sendMediaToUser(msg) {
 
 // === Основной обработчик сообщений (объединенный) ===
 bot.on('message', async (msg) => {
+  // Игнорируем сообщения не из личных чатов
+  if (!isPrivateChat(msg)) return
+
   // Обработка успешного платежа
   if (msg.successful_payment) {
     const payment = msg.successful_payment
