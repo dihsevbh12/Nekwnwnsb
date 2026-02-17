@@ -993,8 +993,8 @@ process.on('SIGINT', () => {
 })
 
 // === Запускаем Express сервер ===
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🌍 API Server running on port ${PORT}`)
-})
+app.get("/health", (req, res) => {
+  res.status(200).send("OK");
+});
 
 console.log('✅ Bot is ready and waiting for messages')
