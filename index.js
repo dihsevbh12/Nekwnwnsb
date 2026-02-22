@@ -25,6 +25,7 @@ const PORT = process.env.PORT || 3000
 
 const ADMIN_IDS = [7660364996, 8050370935]
 
+// === Цены в Звездах ===
 const STARS_PRICES = {
   new: { 15: 117, 30: 294, 365: 2358 },
   renew: { 15: 176, 30: 352, 365: 2948 }
@@ -43,9 +44,13 @@ const CRYPTO_PRICES = {
   }
 }
 
+// === Rate Limiting для Telegram API ===
 let rateLimitDelay = 0
 let isProcessing = false
 
+console.log('🤖 Bot started')
+
+// === Генерация ключа ===
 function generateKey() {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   let key = ''
@@ -55,6 +60,7 @@ function generateKey() {
   return key
 }
 
+// === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
   const userId = msg.from.id
@@ -75,6 +81,7 @@ async function registerUser(msg) {
       return false
     }
 
+    // Попробуем получить ссылку на аватар пользователя (если есть)
     let avatarUrl = null
     try {
       const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
@@ -94,6 +101,7 @@ async function registerUser(msg) {
 
     if (existingUser) {
       console.log(`User ${userId} already exists`)
+      // Обновим avatar_url, если он появился или изменился
       try {
         if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
           const { error: updateErr } = await supabase
@@ -102,7 +110,7 @@ async function registerUser(msg) {
             .eq('idtg', userId)
 
           if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
-          else console.log(`Updated avatar_url for user ${userId}`)
+          else console.log(`✅ Updated avatar_url for user ${userId}`)
         }
       } catch (err) {
         console.error('Error updating existing user avatar:', err)
@@ -132,6 +140,7 @@ async function registerUser(msg) {
       return false
     }
 
+    console.log(`✅ New user registered: ${userId}, key: ${key}`)
     return true
 
   } catch (error) {
@@ -140,6 +149,7 @@ async function registerUser(msg) {
   }
 }
 
+// === Главное меню ===
 function showMainMenu(chatId) {
   const options = {
     reply_markup: {
@@ -175,6 +185,7 @@ function showMainMenu(chatId) {
   })
 }
 
+// === Меню поддержки ===
 function showSupportMenu(chatId) {
   const options = {
     reply_markup: {
@@ -216,7 +227,11 @@ function showSupportMenu(chatId) {
   })
 }
 
+// ==========================================
+// API Endpoint для создания инвойса
+// ==========================================
 app.post('/api/create-stars-invoice', async (req, res) => {
+  console.log('🔐 TOKEN exists:', !!process.env.CRYPTO_BOT_TOKEN)
   try {
     const { plan, isRenewal, userId } = req.body
 
@@ -257,8 +272,11 @@ app.post('/api/create-stars-invoice', async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' })
   }
 })
-
+// ==========================================
+// API: CryptoBot invoice (СОЗДАНИЕ)
+// ==========================================
 app.post('/api/create-crypto-invoice', async (req, res) => {
+  console.log('📥 /create-crypto-invoice', req.body)
   try {
     const { plan, isRenewal, userId } = req.body
 
@@ -273,9 +291,10 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
       return res.status(400).json({ ok: false, message: 'Invalid plan' })
     }
 
+    // CryptoBot не любит много нулей, но любит строки
     const amountString = price.toString();
     if (!process.env.CRYPTO_BOT_TOKEN) {
-      console.error('CRYPTO_BOT_TOKEN is undefined')
+      console.error('❌ CRYPTO_BOT_TOKEN is undefined')
       return res.status(500).json({
         ok: false,
         description: 'CryptoBot token not configured on server'
@@ -294,7 +313,7 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
         'Crypto-Pay-API-Token': process.env.CRYPTO_BOT_TOKEN
       },
       body: JSON.stringify({
-        asset: 'USDT',
+        asset: 'USDT', // Убедитесь, что в приложении CryptoBot включен кошелек USDT
         amount: amountString,
         description: `Подписка на ${plan} дней`,
         payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
@@ -305,8 +324,10 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
 
     const data = await response.json()
 
+    // ЛОГИРУЕМ ОШИБКУ, ЕСЛИ ОНА ЕСТЬ
     if (!data.ok) {
-      console.error('CryptoBot Error:', JSON.stringify(data));
+      console.error('❌ CryptoBot Error:', JSON.stringify(data));
+      // Возвращаем описание ошибки на фронтенд
       return res.status(400).json({ 
         ok: false, 
         description: data.error?.name || 'CryptoBot API Error' 
@@ -321,6 +342,9 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
   }
 })
 
+// ==========================================
+// API: Проверка статуса (НОВЫЙ МЕТОД)
+// ==========================================
 app.post('/api/check-crypto-status', async (req, res) => {
     try {
         const { invoiceId } = req.body;
@@ -349,20 +373,27 @@ app.post('/api/check-crypto-status', async (req, res) => {
     }
 });
 
+// ==========================================
+// Обработка Pre-Checkout (Обязательно для оплаты)
+// ==========================================
 bot.on('pre_checkout_query', async (query) => {
   await bot.answerPreCheckoutQuery(query.id, true).catch(err => {
     console.error('Pre-checkout error:', err)
   })
 })
 
+// === Проверка на личные сообщения ===
 function isPrivateChat(msg) {
   return msg && msg.chat && msg.chat.type === 'private'
 }
 
+// === Обработка команды /start ===
 bot.onText(/\/start/, async (msg) => {
   if (!isPrivateChat(msg)) return
   const chatId = msg.chat.id
   const userId = msg.from.id
+
+  console.log(`/start command from ${userId}`)
 
   try {
     const registered = await registerUser(msg)
@@ -379,6 +410,7 @@ bot.onText(/\/start/, async (msg) => {
   }
 })
 
+// === Обработка callback запросов ===
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id
   const data = callbackQuery.data
@@ -424,16 +456,18 @@ bot.on('callback_query', async (callbackQuery) => {
   }
 })
 
+// === Обработка темы поддержки ===
 async function handleSupportTopic(chatId, userId, topic) {
   await saveSupportChoice(chatId, userId, topic)
 
   const message = `Вы выбрали тему: *${topic}*\n\n` +
     `*Опишите вашу проблему или вопрос*\n` +
-    `Просто напишите сообщение, и администратор свяжется с вами в ближайшее время.`
+    `Просто напишите сообщение, и администратор свяжется с вами в ближайшее время. Для закрытия чата с поддержкой используйте /start`
 
   await bot.sendMessage(chatId, message, { parse_mode: 'Markdown' })
 }
 
+// === Сохранение выбора темы ===
 async function saveSupportChoice(chatId, userId, topic) {
   try {
     const { data: user, error } = await supabase
@@ -468,16 +502,19 @@ async function saveSupportChoice(chatId, userId, topic) {
   }
 }
 
+// === Обработка фото ===
 bot.on('photo', async (msg) => {
   if (!isPrivateChat(msg)) return
   await handleMediaMessage(msg, 'photo')
 })
 
+// === Обработка документов ===
 bot.on('document', async (msg) => {
   if (!isPrivateChat(msg)) return
   await handleMediaMessage(msg, 'document')
 })
 
+// === Общая функция для медиа ===
 async function handleMediaMessage(msg, mediaType) {
   const chatId = msg.chat.id
   const userId = msg.from.id
@@ -563,6 +600,7 @@ async function handleMediaMessage(msg, mediaType) {
   }
 }
 
+// === Уведомление админов о медиа ===
 async function notifyAdminsAboutMedia(userId, username, fullName, mediaType, caption, topic) {
   try {
     const safeUsername = username.replace(/\*/g, '')
@@ -571,7 +609,7 @@ async function notifyAdminsAboutMedia(userId, username, fullName, mediaType, cap
       .replace(/_/g, '\\_')
       .replace(/`/g, '\\`')
 
-    const mediaTypeText = mediaType === 'photo' ? 'Фото' : 'Файл'
+    const mediaTypeText = mediaType === 'photo' ? '📷 Фото' : '📄 Файл'
     const captionText = caption ? `\nТекст: ${safeCaption}` : ''
 
     const message = `*Новое медиа-сообщение*\n\n` +
@@ -598,12 +636,14 @@ async function notifyAdminsAboutMedia(userId, username, fullName, mediaType, cap
   }
 }
 
+// === Проверка и отправка ответов администраторов ===
 async function checkAndSendAdminMessages() {
   if (isProcessing || rateLimitDelay > 0) return
 
   isProcessing = true
 
   try {
+    console.log('🔍 Проверяем сообщения от админов для отправки пользователям...')
 
     const { data: messages, error } = await supabase
       .from('support_messages')
@@ -614,18 +654,21 @@ async function checkAndSendAdminMessages() {
       .limit(5)
 
     if (error) {
-      console.error('Ошибка получения сообщений:', error)
+      console.error('❌ Ошибка получения сообщений:', error)
       return
     }
 
     if (!messages || messages.length === 0) {
+      console.log('📭 Нет сообщений для отправки')
       return
     }
 
+    console.log(`📨 Найдено ${messages.length} сообщений для отправки`)
 
     for (const msg of messages) {
       try {
         if (!msg.message && !msg.media_type) {
+          console.log(`⚠️ Пропускаем пустое сообщение ID: ${msg.id}`)
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
@@ -634,9 +677,16 @@ async function checkAndSendAdminMessages() {
         }
 
         if (rateLimitDelay > 0) {
+          console.log(`⏳ Rate limit delay: ${rateLimitDelay}s`)
           await new Promise(resolve => setTimeout(resolve, rateLimitDelay * 1000))
           rateLimitDelay = 0
         }
+
+        console.log(`📤 Отправляем сообщение ${msg.id} пользователю ${msg.chat_id}:`, {
+          hasText: !!msg.message,
+          hasMedia: !!msg.media_type,
+          messagePreview: msg.message ? msg.message.substring(0, 50) + '...' : 'нет текста'
+        })
 
         let sentSuccessfully = false
 
@@ -661,15 +711,16 @@ async function checkAndSendAdminMessages() {
             .eq('id', msg.id)
 
           if (updateError) {
-            console.error('Ошибка обновления статуса:', updateError)
+            console.error('❌ Ошибка обновления статуса:', updateError)
           } else {
+            console.log(`✅ Сообщение ${msg.id} успешно отправлено пользователю ${msg.chat_id}`)
           }
         }
 
         await new Promise(resolve => setTimeout(resolve, 1000))
 
       } catch (telegramError) {
-        console.error(`Ошибка отправки пользователю ${msg.chat_id}:`, {
+        console.error(`❌ Ошибка отправки пользователю ${msg.chat_id}:`, {
           error: telegramError.message,
           response: telegramError.response?.body,
           statusCode: telegramError.response?.statusCode
@@ -677,15 +728,18 @@ async function checkAndSendAdminMessages() {
 
         if (telegramError.response?.statusCode === 429) {
           rateLimitDelay = telegramError.response.body?.parameters?.retry_after || 20
+          console.log(`⚠️ Rate limit! Ждем ${rateLimitDelay}s`)
           break
         }
 
         if (telegramError.response?.statusCode === 403) {
+          console.log(`❌ Пользователь ${msg.chat_id} заблокировал бота`)
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
             .eq('id', msg.id)
         } else if (telegramError.response?.statusCode === 400) {
+          console.log(`⚠️ Bad Request для ${msg.chat_id}:`, telegramError.response.body)
           await supabase
             .from('support_messages')
             .update({ sent_to_user: true })
@@ -695,12 +749,13 @@ async function checkAndSendAdminMessages() {
     }
 
   } catch (error) {
-    console.error('Ошибка в checkAndSendAdminMessages:', error)
+    console.error('❌ Ошибка в checkAndSendAdminMessages:', error)
   } finally {
     isProcessing = false
   }
 }
 
+// === Функция отправки медиа пользователю ===
 async function sendMediaToUser(msg) {
   const chatId = msg.chat_id
   const caption = msg.message || ''
@@ -729,9 +784,12 @@ async function sendMediaToUser(msg) {
   }
 }
 
+// === Основной обработчик сообщений (объединенный) ===
 bot.on('message', async (msg) => {
+  // Игнорируем сообщения не из личных чатов
   if (!isPrivateChat(msg)) return
 
+  // Обработка успешного платежа
   if (msg.successful_payment) {
     const payment = msg.successful_payment
     const currency = payment.currency
@@ -747,7 +805,7 @@ bot.on('message', async (msg) => {
 
     const { userId, plan, isRenewal } = payloadData
 
-    console.log(`Payment received: User ${userId}, Plan ${plan} days, Amount ${amount} ${currency}`)
+    console.log(`💰 Payment received: User ${userId}, Plan ${plan} days, Amount ${amount} ${currency}`)
 
     try {
       const { data: userData, error: fetchError } = await supabase
@@ -785,21 +843,22 @@ bot.on('message', async (msg) => {
       if (updateError) throw updateError
 
       await bot.sendMessage(msg.chat.id, 
-        `*Оплата прошла успешно!*\n\nВаша подписка продлена на *${plan} дней*.\nДействует до: ${new Date(newExpiryString).toLocaleDateString('ru-RU')}`, 
+        `✅ *Оплата прошла успешно!*\n\nВаша подписка продлена на *${plan} дней*.\nДействует до: ${new Date(newExpiryString).toLocaleDateString('ru-RU')}`, 
         { parse_mode: 'Markdown' }
       )
 
       for (const adminId of ADMIN_IDS) {
-        bot.sendMessage(adminId, `*Новая продажа (Stars)*\nUser ID: ${userId}\nPlan: ${plan} days\nAmount: ${amount} XTR`, { parse_mode: 'Markdown' })
+        bot.sendMessage(adminId, `💰 *Новая продажа (Stars)*\nUser ID: ${userId}\nPlan: ${plan} days\nAmount: ${amount} XTR`, { parse_mode: 'Markdown' })
       }
 
     } catch (error) {
       console.error('Database update error after payment:', error)
-      await bot.sendMessage(msg.chat.id, 'Оплата прошла, но возникла ошибка при активации. Пожалуйста, напишите в поддержку.')
+      await bot.sendMessage(msg.chat.id, '⚠️ Оплата прошла, но возникла ошибка при активации. Пожалуйста, напишите в поддержку.')
     }
     return
   }
 
+  // Игнорируем команды, фото и документы (они обрабатываются отдельно)
   if (msg.text?.startsWith('/')) return
   if (msg.photo || msg.document) return
 
@@ -850,6 +909,8 @@ bot.on('message', async (msg) => {
       return
     }
 
+    console.log(`📥 Support message from ${userId} saved`)
+
     const { data: lastTopic } = await supabase
       .from('support_messages')
       .select('topic')
@@ -870,6 +931,7 @@ bot.on('message', async (msg) => {
   }
 })
 
+// === Уведомление админов о новом сообщении ===
 async function notifyAdminsAboutNewMessage(userId, username, fullName, messageText, topic = 'Не указана') {
   try {
     const safeUsername = username.replace(/\*/g, '')
@@ -908,6 +970,7 @@ async function notifyAdminsAboutNewMessage(userId, username, fullName, messageTe
   }
 }
 
+// === Уведомление админов о новой заявке ===
 async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
   try {
     const safeUsername = username.replace(/\*/g, '')
@@ -922,10 +985,12 @@ async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
     for (const adminId of ADMIN_IDS) {
       try {
         await bot.sendMessage(adminId, message, { parse_mode: 'Markdown' })
+        console.log(`✅ Уведомление отправлено админу ${adminId}`)
       } catch (error) {
         if (error.response?.body?.description?.includes('parse entities')) {
           const plainMessage = message.replace(/\*/g, '')
           await bot.sendMessage(adminId, plainMessage)
+          console.log(`✅ Уведомление отправлено админу ${adminId} (без форматирования)`)
         } else {
           console.error(`Ошибка отправки админу ${adminId}:`, error.message)
         }
@@ -937,8 +1002,11 @@ async function notifyAdminsAboutNewTicket(userId, username, fullName, topic) {
   }
 }
 
+// === Периодическая проверка ответов администраторов ===
 setInterval(checkAndSendAdminMessages, 5000)
+console.log('⏰ Started message polling every 5 seconds')
 
+// === Обработка ошибок бота ===
 bot.on('polling_error', (error) => {
   console.error('Polling error:', error.message)
 })
@@ -947,12 +1015,16 @@ bot.on('webhook_error', (error) => {
   console.error('Webhook error:', error.message)
 })
 
+// === Graceful shutdown ===
 process.on('SIGINT', () => {
   console.log('Shutting down bot...')
   bot.stopPolling()
   process.exit()
 })
 
+// === Запускаем Express сервер ===
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
+
+console.log('✅ Bot is ready and waiting for messages')
