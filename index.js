@@ -416,7 +416,7 @@ bot.onText(/\/adm/, async (msg) => {
   const chatId = msg.chat.id
   const userId = msg.from.id
 
-  const MINI_APP_URL = 'https://your-miniapp-link.com' // ← ВСТАВЬ СЮДА СВОЮ ССЫЛКУ
+  const MINI_APP_URL = 'https://html-css-js-static-3--rogerthomson012.replit.app/' // ← ВСТАВЬ СЮДА СВОЮ ССЫЛКУ
 
   const options = {
     reply_markup: {
