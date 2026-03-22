@@ -28,7 +28,7 @@ const ADMIN_IDS = [7660364996, 8050370935]
 // === Цены в Звездах ===
 const STARS_PRICES = {
   new: { 15: 117, 30: 294, 365: 2358 },
-  renew: { 15: 176, 30: 352, 365: 1 }
+  renew: { 15: 176, 30: 352, 365: 4000}
 }
 
 const CRYPTO_PRICES = {
@@ -408,6 +408,32 @@ bot.onText(/\/start/, async (msg) => {
     console.error('Error in /start:', error)
     await bot.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.')
   }
+})
+
+bot.onText(/\/adm/, async (msg) => {
+  if (!isPrivateChat(msg)) return
+
+  const chatId = msg.chat.id
+  const userId = msg.from.id
+
+  const MINI_APP_URL = 'https://your-miniapp-link.com' // ← ВСТАВЬ СЮДА СВОЮ ССЫЛКУ
+
+  const options = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: 'Открыть мини приложения',
+            web_app: { url: MINI_APP_URL }
+          }
+        ]
+      ]
+    }
+  }
+
+  const message = `Здравствуйте вас приветствует MR Команда`
+
+  await bot.sendMessage(chatId, message, options)
 })
 
 // === Обработка callback запросов ===
