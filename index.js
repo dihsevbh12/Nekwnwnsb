@@ -514,7 +514,7 @@ bot.onText(/\/nt\s+(.+)/, async (msg, match) => {
 
   try {
       // URL твоего Express сервера. Если бот и сервер на разных машинах, укажи полный URL (http://твой-ip:7860/api/notify)
-      const SERVER_API_URL = process.env.SERVER_API_URL || 'http://localhost:7860/api/notify';
+      const SERVER_API_URL = 'https://mr-studio-mr-studios.hf.space/api/notify';
       
       const response = await fetch(SERVER_API_URL, {
           method: 'POST',
