@@ -410,6 +410,8 @@ bot.onText(/\/start/, async (msg) => {
   }
 })
 
+
+
 bot.onText(/\/adm/, async (msg) => {
   if (!isPrivateChat(msg)) return
 
@@ -479,6 +481,64 @@ bot.on('callback_query', async (callbackQuery) => {
   } catch (error) {
     console.error('Error in callback:', error)
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Произошла ошибка' })
+  }
+})
+
+// === Обработка команды /nt (Уведомления) ===
+bot.onText(/\/nt\s+(.+)/, async (msg, match) => {
+  if (!isPrivateChat(msg)) return;
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  // Проверяем, является ли пользователь администратором
+  if (!ADMIN_IDS.includes(userId)) {
+      return bot.sendMessage(chatId, 'У вас нет прав для использования этой команды.');
+  }
+
+  // Получаем весь текст после /nt
+  const args = match[1].trim(); 
+  
+  // Ищем первый пробел, чтобы разделить target (кому) и message (текст)
+  const firstSpaceIndex = args.indexOf(' ');
+  if (firstSpaceIndex === -1) {
+      return bot.sendMessage(chatId, '❌ Неверный формат.\nИспользование:\n`/nt -all Ваш текст`\nИЛИ\n`/nt КЛЮЧ Ваш текст`', { parse_mode: 'Markdown' });
+  }
+
+  let target = args.substring(0, firstSpaceIndex).trim();
+  const messageText = args.substring(firstSpaceIndex + 1).trim();
+
+  // Преобразуем -all в all для базы данных
+  if (target === '-all') target = 'all';
+
+  bot.sendMessage(chatId, `⏳ Отправка уведомления для: ${target}...`);
+
+  try {
+      // URL твоего Express сервера. Если бот и сервер на разных машинах, укажи полный URL (http://твой-ip:7860/api/notify)
+      const SERVER_API_URL = process.env.SERVER_API_URL || 'http://localhost:7860/api/notify';
+      
+      const response = await fetch(SERVER_API_URL, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+              token: process.env.MY_API_TOKEN, // Токен для защиты API
+              target: target,
+              message: messageText
+          })
+      });
+
+      const data = await response.json();
+
+      if (data.status) {
+          await bot.sendMessage(chatId, `✅ *Успешно!*\nУведомление добавлено.\nID уведомления: ${data.notification_id}`, { parse_mode: 'Markdown' });
+      } else {
+          await bot.sendMessage(chatId, `❌ *Ошибка сервера:*\n${data.message}`, { parse_mode: 'Markdown' });
+      }
+
+  } catch (error) {
+      console.error('Ошибка при отправке /nt:', error);
+      await bot.sendMessage(chatId, '❌ Произошла ошибка при связи с сервером. Проверьте логи.');
   }
 })
 
