@@ -485,35 +485,68 @@ bot.on('callback_query', async (callbackQuery) => {
 })
 
 // === Обработка команды /nt (Уведомления) ===
-bot.onText(/\/nt\s+(.+)/, async (msg, match) => {
+// Изменили регулярное выражение, чтобы команда срабатывала даже без аргументов
+bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
   if (!isPrivateChat(msg)) return;
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
   // Проверяем, является ли пользователь администратором
   if (!ADMIN_IDS.includes(userId)) {
-      return bot.sendMessage(chatId, 'У вас нет прав для использования этой команды.');
+      return bot.sendMessage(chatId, 'У вас нет прав для использования этой команды.', { parse_mode: 'Markdown' });
   }
 
-  // Получаем весь текст после /nt
-  const args = match[1].trim(); 
+  // Получаем аргументы или пустую строку
+  const args = match[1] ? match[1].trim() : ''; 
   
+  // Если аргументов нет (пользователь ввел просто /nt), показываем инструкцию
+  if (!args) {
+      return bot.sendMessage(chatId, 
+          `📝 *Система уведомлений*\n\n` +
+          `*Формат команды:*\n` +
+          `\`/nt -all Ваш текст\` — отправить всем\n` +
+          `\`/nt КЛЮЧ Ваш текст\` — отправить конкретному пользователю\n\n` +
+          `*Пример:*\n` +
+          `\`/nt -all Доступно новое обновление!\``, 
+          { parse_mode: 'Markdown' }
+      );
+  }
+
   // Ищем первый пробел, чтобы разделить target (кому) и message (текст)
   const firstSpaceIndex = args.indexOf(' ');
   if (firstSpaceIndex === -1) {
-      return bot.sendMessage(chatId, '❌ Неверный формат.\nИспользование:\n`/nt -all Ваш текст`\nИЛИ\n`/nt КЛЮЧ Ваш текст`', { parse_mode: 'Markdown' });
+      return bot.sendMessage(chatId, '❌ *Ошибка формата*\nВы забыли указать текст уведомления.\nНапишите просто `/nt`, чтобы посмотреть пример.', { parse_mode: 'Markdown' });
   }
 
   let target = args.substring(0, firstSpaceIndex).trim();
   const messageText = args.substring(firstSpaceIndex + 1).trim();
 
-  // Преобразуем -all в all для базы данных
+  // Преобразуем -all в all для сервера
   if (target === '-all') target = 'all';
 
-  bot.sendMessage(chatId, `⏳ Отправка уведомления для: ${target}...`);
+  // === НОВАЯ ПРОВЕРКА ПОЛЬЗОВАТЕЛЯ ===
+  // Если отправляем не всем, проверяем, существует ли такой ключ в базе
+  if (target !== 'all') {
+      try {
+          const { data: keyData, error: keyError } = await supabase
+              .from('user_keys')
+              .select('key')
+              .eq('key', target)
+              .single();
+
+          if (keyError || !keyData) {
+              return bot.sendMessage(chatId, `❌ *Пользователь не найден*\nКлюч \`${target}\` отсутствует в базе данных. Проверьте правильность.`, { parse_mode: 'Markdown' });
+          }
+      } catch (err) {
+          console.error('Ошибка проверки ключа:', err);
+          return bot.sendMessage(chatId, '⚠️ *Ошибка базы данных* при проверке ключа.', { parse_mode: 'Markdown' });
+      }
+  }
+
+  // Отправляем временное сообщение о статусе
+  const statusMsg = await bot.sendMessage(chatId, `⏳ *Отправка уведомления...*\nПолучатель: \`${target}\``, { parse_mode: 'Markdown' });
 
   try {
-      // URL твоего Express сервера. Если бот и сервер на разных машинах, укажи полный URL (http://твой-ip:7860/api/notify)
       const SERVER_API_URL = 'https://mr-studio-mr-studios.hf.space/api/notify';
       
       const response = await fetch(SERVER_API_URL, {
@@ -522,7 +555,7 @@ bot.onText(/\/nt\s+(.+)/, async (msg, match) => {
               'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-              token: process.env.MY_API_TOKEN, // Токен для защиты API
+              token: process.env.MY_API_TOKEN,
               target: target,
               message: messageText
           })
@@ -530,15 +563,37 @@ bot.onText(/\/nt\s+(.+)/, async (msg, match) => {
 
       const data = await response.json();
 
+      // Обновляем временное сообщение на успешное или ошибочное
       if (data.status) {
-          await bot.sendMessage(chatId, `✅ *Успешно!*\nУведомление добавлено.\nID уведомления: ${data.notification_id}`, { parse_mode: 'Markdown' });
+          await bot.editMessageText(
+              `✅ *Уведомление успешно отправлено!*\n\n` +
+              `👤 *Кому:* \`${target}\`\n` +
+              `🆔 *ID уведомления:* \`${data.notification_id}\`\n` +
+              `💬 *Текст:* _${messageText}_`, 
+              { 
+                  chat_id: chatId, 
+                  message_id: statusMsg.message_id,
+                  parse_mode: 'Markdown' 
+              }
+          );
       } else {
-          await bot.sendMessage(chatId, `❌ *Ошибка сервера:*\n${data.message}`, { parse_mode: 'Markdown' });
+          await bot.editMessageText(
+              `❌ *Ошибка сервера:*\n\`${data.message}\``, 
+              { 
+                  chat_id: chatId, 
+                  message_id: statusMsg.message_id,
+                  parse_mode: 'Markdown' 
+              }
+          );
       }
 
   } catch (error) {
       console.error('Ошибка при отправке /nt:', error);
-      await bot.sendMessage(chatId, '❌ Произошла ошибка при связи с сервером. Проверьте логи.');
+      await bot.editMessageText('❌ *Системная ошибка*\nПроизошла ошибка при связи с сервером. Проверьте логи сервера.', { 
+          chat_id: chatId, 
+          message_id: statusMsg.message_id,
+          parse_mode: 'Markdown'
+      });
   }
 })
 
