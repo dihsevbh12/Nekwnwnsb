@@ -485,66 +485,43 @@ bot.on('callback_query', async (callbackQuery) => {
 })
 
 // === Обработка команды /nt (Уведомления) ===
-// Изменили регулярное выражение, чтобы команда срабатывала даже без аргументов
 bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
   if (!isPrivateChat(msg)) return;
   const chatId = msg.chat.id;
   const userId = msg.from.id;
 
-  // Проверяем, является ли пользователь администратором
+  // Проверка на админа
   if (!ADMIN_IDS.includes(userId)) {
       return bot.sendMessage(chatId, 'У вас нет прав для использования этой команды.', { parse_mode: 'Markdown' });
   }
 
-  // Получаем аргументы или пустую строку
   const args = match[1] ? match[1].trim() : ''; 
   
-  // Если аргументов нет (пользователь ввел просто /nt), показываем инструкцию
+  // Если просто написали /nt без текста — показываем инструкцию
   if (!args) {
       return bot.sendMessage(chatId, 
-          `📝 *Система уведомлений*\n\n` +
-          `*Формат команды:*\n` +
+          `*Система уведомлений*\n\n` +
+          `*Форматы:*\n` +
           `\`/nt -all Ваш текст\` — отправить всем\n` +
-          `\`/nt КЛЮЧ Ваш текст\` — отправить конкретному пользователю\n\n` +
+          `\`/nt КЛЮЧ Ваш текст\` — отправить одному\n\n` +
           `*Пример:*\n` +
           `\`/nt -all Доступно новое обновление!\``, 
           { parse_mode: 'Markdown' }
       );
   }
 
-  // Ищем первый пробел, чтобы разделить target (кому) и message (текст)
   const firstSpaceIndex = args.indexOf(' ');
   if (firstSpaceIndex === -1) {
-      return bot.sendMessage(chatId, '❌ *Ошибка формата*\nВы забыли указать текст уведомления.\nНапишите просто `/nt`, чтобы посмотреть пример.', { parse_mode: 'Markdown' });
+      return bot.sendMessage(chatId, '*Ошибка формата*\nВы забыли указать текст уведомления.', { parse_mode: 'Markdown' });
   }
 
   let target = args.substring(0, firstSpaceIndex).trim();
   const messageText = args.substring(firstSpaceIndex + 1).trim();
 
-  // Преобразуем -all в all для сервера
   if (target === '-all') target = 'all';
 
-  // === НОВАЯ ПРОВЕРКА ПОЛЬЗОВАТЕЛЯ ===
-  // Если отправляем не всем, проверяем, существует ли такой ключ в базе
-  if (target !== 'all') {
-      try {
-          const { data: keyData, error: keyError } = await supabase
-              .from('user_keys')
-              .select('key')
-              .eq('key', target)
-              .single();
-
-          if (keyError || !keyData) {
-              return bot.sendMessage(chatId, `❌ *Пользователь не найден*\nКлюч \`${target}\` отсутствует в базе данных. Проверьте правильность.`, { parse_mode: 'Markdown' });
-          }
-      } catch (err) {
-          console.error('Ошибка проверки ключа:', err);
-          return bot.sendMessage(chatId, '⚠️ *Ошибка базы данных* при проверке ключа.', { parse_mode: 'Markdown' });
-      }
-  }
-
-  // Отправляем временное сообщение о статусе
-  const statusMsg = await bot.sendMessage(chatId, `⏳ *Отправка уведомления...*\nПолучатель: \`${target}\``, { parse_mode: 'Markdown' });
+  // Отправляем сообщение "В процессе..."
+  const statusMsg = await bot.sendMessage(chatId, `*Отправка уведомления...*\nПолучатель: \`${target}\``, { parse_mode: 'Markdown' });
 
   try {
       const SERVER_API_URL = 'https://mr-studio-mr-studios.hf.space/api/notify';
@@ -563,13 +540,12 @@ bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
 
       const data = await response.json();
 
-      // Обновляем временное сообщение на успешное или ошибочное
+      // Если сервер ответил успешно
       if (data.status) {
           await bot.editMessageText(
-              `✅ *Уведомление успешно отправлено!*\n\n` +
-              `👤 *Кому:* \`${target}\`\n` +
-              `🆔 *ID уведомления:* \`${data.notification_id}\`\n` +
-              `💬 *Текст:* _${messageText}_`, 
+              `*Уведомление успешно отправлено!*\n\n` +
+              `*Кому:* \`${target}\`\n` +
+              `*Текст:* _${messageText}_`, 
               { 
                   chat_id: chatId, 
                   message_id: statusMsg.message_id,
@@ -577,8 +553,9 @@ bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
               }
           );
       } else {
+          // Если сервер выдал ошибку (например, неверный ключ)
           await bot.editMessageText(
-              `❌ *Ошибка сервера:*\n\`${data.message}\``, 
+              `*Ошибка:*\n${data.message}`, 
               { 
                   chat_id: chatId, 
                   message_id: statusMsg.message_id,
@@ -589,7 +566,7 @@ bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
 
   } catch (error) {
       console.error('Ошибка при отправке /nt:', error);
-      await bot.editMessageText('❌ *Системная ошибка*\nПроизошла ошибка при связи с сервером. Проверьте логи сервера.', { 
+      await bot.editMessageText('*Системная ошибка*\nПроизошла ошибка при связи с сервером.', { 
           chat_id: chatId, 
           message_id: statusMsg.message_id,
           parse_mode: 'Markdown'
