@@ -70,56 +70,52 @@ async function registerUser(msg) {
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
+    console.log(`🔍 Checking existence for user ${userId}`)
+    
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id, avatar_url')
       .eq('idtg', userId)
-      .single()
+      .maybeSingle() // вместо .single()
 
-    if (checkError && checkError.code !== 'PGRST116') {
-      console.error('Error checking user:', checkError)
+    if (checkError) {
+      console.error('❌ Error checking user:', checkError)
       return false
     }
 
-    // Попробуем получить ссылку на аватар пользователя (если есть)
+    console.log(`📦 Existing user data:`, existingUser)
+
+    // Получаем аватарку (если есть)
     let avatarUrl = null
     try {
       const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
+      if (photos && photos.total_count > 0 && photos.photos?.length > 0) {
         const sizes = photos.photos[0]
         const bestSize = sizes[sizes.length - 1]
         const fileId = bestSize.file_id
-        try {
-          avatarUrl = await bot.getFileLink(fileId)
-        } catch (err) {
-          console.warn('Could not get file link for avatar:', err.message || err)
-        }
+        avatarUrl = await bot.getFileLink(fileId)
       }
     } catch (err) {
-      console.warn('Could not fetch user profile photos:', err.message || err)
+      console.warn('Could not fetch avatar:', err.message)
     }
 
     if (existingUser) {
-      console.log(`User ${userId} already exists`)
-      // Обновим avatar_url, если он появился или изменился
-      try {
-        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ avatar_url: avatarUrl })
-            .eq('idtg', userId)
-
-          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
-          else console.log(`✅ Updated avatar_url for user ${userId}`)
-        }
-      } catch (err) {
-        console.error('Error updating existing user avatar:', err)
+      console.log(`✅ User ${userId} already exists`)
+      // Обновим аватар, если изменился
+      if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
+        const { error: updateErr } = await supabase
+          .from('users')
+          .update({ avatar_url: avatarUrl })
+          .eq('idtg', userId)
+        if (updateErr) console.error('Error updating avatar:', updateErr)
+        else console.log(`✅ Avatar updated for ${userId}`)
       }
-
       return true
     }
 
+    // Новый пользователь
     const key = generateKey()
+    console.log(`🆕 Creating new user ${userId} with key ${key}`)
 
     const { error: insertError } = await supabase
       .from('users')
@@ -134,15 +130,15 @@ async function registerUser(msg) {
       })
 
     if (insertError) {
-      console.error('Error creating user:', insertError)
+      console.error('❌ Error creating user:', insertError)
       return false
     }
 
-    console.log(`✅ New user registered: ${userId}, key: ${key}`)
+    console.log(`✅ New user registered: ${userId}`)
     return true
 
   } catch (error) {
-    console.error('Error in registerUser:', error)
+    console.error('❌ Exception in registerUser:', error)
     return false
   }
 }
