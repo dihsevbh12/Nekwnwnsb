@@ -72,13 +72,51 @@ async function registerUser(msg) {
   try {
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
-      .select('id')
+      .select('id, avatar_url')
       .eq('idtg', userId)
       .single()
 
     if (checkError && checkError.code !== 'PGRST116') {
       console.error('Error checking user:', checkError)
       return false
+    }
+
+    // Попробуем получить ссылку на аватар пользователя (если есть)
+    let avatarUrl = null
+    try {
+      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
+      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
+        const sizes = photos.photos[0]
+        const bestSize = sizes[sizes.length - 1]
+        const fileId = bestSize.file_id
+        try {
+          avatarUrl = await bot.getFileLink(fileId)
+        } catch (err) {
+          console.warn('Could not get file link for avatar:', err.message || err)
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch user profile photos:', err.message || err)
+    }
+
+    if (existingUser) {
+      console.log(`User ${userId} already exists`)
+      // Обновим avatar_url, если он появился или изменился
+      try {
+        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ avatar_url: avatarUrl, registration_date: existingUser.registration_date || new Date().toISOString().split('T')[0] })
+            .eq('idtg', userId)
+
+          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
+          else console.log(`✅ Updated avatar_url for user ${userId}`)
+        }
+      } catch (err) {
+        console.error('Error updating existing user avatar:', err)
+      }
+
+      return true
     }
 
     const key = generateKey()
@@ -186,7 +224,9 @@ function showSupportMenu(chatId) {
   })
 }
 
-
+// ==========================================
+// API Endpoint для создания инвойса
+// ==========================================
 app.post('/api/create-stars-invoice', async (req, res) => {
   console.log('🔐 TOKEN exists:', !!process.env.CRYPTO_BOT_TOKEN)
   try {
@@ -364,6 +404,80 @@ bot.onText(/\/start/, async (msg) => {
   } catch (error) {
     console.error('Error in /start:', error)
     await bot.sendMessage(chatId, 'Произошла ошибка. Пожалуйста, попробуйте позже.')
+  }
+})
+
+
+
+bot.onText(/\/adm/, async (msg) => {
+  if (!isPrivateChat(msg)) return
+
+  const chatId = msg.chat.id
+  const userId = msg.from.id
+
+  const MINI_APP_URL = 'https://html-css-js-static-3--rogerthomson012.replit.app/' // ← ВСТАВЬ СЮДА СВОЮ ССЫЛКУ
+
+  const options = {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          {
+            text: 'Открыть мини приложения',
+            web_app: { url: MINI_APP_URL }
+          }
+        ]
+      ]
+    }
+  }
+
+  const message = `Здравствуйте вас приветствует MR Команда`
+
+  await bot.sendMessage(chatId, message, options)
+})
+
+// === Обработка callback запросов ===
+bot.on('callback_query', async (callbackQuery) => {
+  const chatId = callbackQuery.message.chat.id
+  const data = callbackQuery.data
+  const userId = callbackQuery.from.id
+
+  console.log(`Callback from ${userId}: ${data}`)
+
+  try {
+    await bot.deleteMessage(chatId, callbackQuery.message.message_id)
+      .catch(err => console.log('Cannot delete message:', err.message))
+
+    switch(data) {
+      case 'support_request':
+        showSupportMenu(chatId)
+        break
+
+      case 'support_payment':
+        await handleSupportTopic(chatId, userId, 'Оплата товара')
+        break
+
+      case 'support_helper':
+        await handleSupportTopic(chatId, userId, 'Проблемы с Helper\'ом')
+        break
+
+      case 'support_suggestions':
+        await handleSupportTopic(chatId, userId, 'Предложения по улучшению')
+        break
+
+      case 'support_other':
+        await handleSupportTopic(chatId, userId, 'Другое')
+        break
+
+      default:
+        await bot.sendMessage(chatId, 'Неизвестная команда')
+        showMainMenu(chatId)
+    }
+
+    await bot.answerCallbackQuery(callbackQuery.id)
+
+  } catch (error) {
+    console.error('Error in callback:', error)
+    await bot.answerCallbackQuery(callbackQuery.id, { text: 'Произошла ошибка' })
   }
 })
 
