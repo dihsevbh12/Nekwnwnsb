@@ -106,7 +106,7 @@ async function registerUser(msg) {
         if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
           const { error: updateErr } = await supabase
             .from('users')
-            .update({ avatar_url: avatarUrl, registration_date: existingUser.registration_date || new Date().toISOString().split('T')[0] })
+            .update({ avatar_url: avatarUrl })
             .eq('idtg', userId)
 
           if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
@@ -126,12 +126,10 @@ async function registerUser(msg) {
       .insert({
         name: fullName,
         idtg: userId,
-        telegram: username,
+        user_name_tg: username,
         key: key,
-        status: 'pending',
-        buykov: 0,
+        total_purchases: 0,
         role: 'user',
-        registration_date: new Date().toISOString().split('T')[0],
         avatar_url: avatarUrl
       })
 
