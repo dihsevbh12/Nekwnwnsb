@@ -72,7 +72,7 @@ async function registerUser(msg) {
   try {
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
-      .select('id, avatar_url')
+      .select('id')
       .eq('idtg', userId)
       .single()
 
