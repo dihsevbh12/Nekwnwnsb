@@ -63,7 +63,7 @@ function generateKey() {
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
-  const userId = Number(msg.from.id)
+  const userId = msg.from.id
   const username = msg.from.username ? `@${msg.from.username}` : 'null'
   const firstName = msg.from.first_name || ''
   const lastName = msg.from.last_name || ''
@@ -73,15 +73,14 @@ async function registerUser(msg) {
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id, avatar_url')
-      .eq('idtg', String(userId))
-      .maybeSingle()
+      .eq('idtg', userId)
+      .single()
 
-    if (checkError) {
+    if (checkError && checkError.code !== 'PGRST116') {
       console.error('Error checking user:', checkError)
       return false
     }
 
-    // Попробуем получить ссылку на аватар пользователя (если есть)
     let avatarUrl = null
     try {
       const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
@@ -106,8 +105,8 @@ async function registerUser(msg) {
         if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
           const { error: updateErr } = await supabase
             .from('users')
-            .update({ avatar_url: avatarUrl })
-            .eq('idtg', String(userId))
+            .update({ avatar_url: avatarUrl, registration_date: existingUser.registration_date || new Date().toISOString().split('T')[0] })
+            .eq('idtg', userId)
 
           if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
           else console.log(`✅ Updated avatar_url for user ${userId}`)
@@ -130,16 +129,11 @@ async function registerUser(msg) {
         key: key,
         total_purchases: 0,
         role: 'user',
+        registration_date: new Date().toISOString().split('T')[0],
         avatar_url: avatarUrl
       })
 
     if (insertError) {
-      // Если произошла ошибка дублирования — вероятно гонка или одновременный запрос
-      if (insertError.code === '23505' || (insertError.details && insertError.details.includes('already exists'))) {
-        console.warn(`User ${userId} already exists (insert race). Treating as registered.`)
-        return true
-      }
-
       console.error('Error creating user:', insertError)
       return false
     }
@@ -595,7 +589,7 @@ async function saveSupportChoice(chatId, userId, topic) {
     const { data: user, error } = await supabase
       .from('users')
       .select('telegram, name')
-      .eq('idtg', String(userId))
+      .eq('idtg', userId)
       .single()
 
     const username = user?.telegram || 'null'
@@ -647,7 +641,7 @@ async function handleMediaMessage(msg, mediaType) {
     const { data: user } = await supabase
       .from('users')
       .select('id')
-      .eq('idtg', String(userId))
+      .eq('idtg', userId)
       .single()
 
     if (!user) {
@@ -933,7 +927,7 @@ bot.on('message', async (msg) => {
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('daysgov')
-        .eq('idtg', String(userId))
+        .eq('idtg', userId)
         .single()
 
       if (fetchError) throw fetchError
@@ -960,7 +954,7 @@ bot.on('message', async (msg) => {
           buykov: amount,
           status: 'active'
         })
-        .eq('idtg', String(userId))
+        .eq('idtg', userId)
 
       if (updateError) throw updateError
 
@@ -996,7 +990,7 @@ bot.on('message', async (msg) => {
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id')
-      .eq('idtg', String(userId))
+      .eq('idtg', userId)
       .single()
 
     if (userError && userError.code !== 'PGRST116') {
