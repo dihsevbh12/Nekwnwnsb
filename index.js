@@ -63,55 +63,50 @@ function generateKey() {
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
-  const userIdRaw = msg.from.id
-  const userIdNum = Number(userIdRaw)
-  const userIdStr = String(userIdRaw)
-  
+  const userIdNum = msg.from.id
+  const userIdStr = String(userIdNum)
   const username = msg.from.username ? `@${msg.from.username}` : 'null'
   const firstName = msg.from.first_name || ''
   const lastName = msg.from.last_name || ''
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
-    // Пробуем найти пользователя и по числу, и по строке
-    let existingUser = null
-    let checkError = null
+    console.log(`🔍 Поиск пользователя: число=${userIdNum}, строка=${userIdStr}`)
 
-    // Сначала пробуем как число (если поле int8)
-    const { data: byNum, error: errNum } = await supabase
+    // Пробуем найти по числу (если поле int8)
+    let { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id, avatar_url')
       .eq('idtg', userIdNum)
       .maybeSingle()
-    
-    if (byNum) {
-      existingUser = byNum
-    } else {
-      // Если не нашли — пробуем как строку (если поле text/varchar)
+
+    console.log(`По числу: existingUser=`, existingUser, `error=`, checkError)
+
+    // Если не нашли — пробуем по строке (если поле text)
+    if (!existingUser && !checkError) {
       const { data: byStr, error: errStr } = await supabase
         .from('users')
         .select('id, avatar_url')
         .eq('idtg', userIdStr)
         .maybeSingle()
-      if (byStr) existingUser = byStr
-      checkError = errStr || errNum
+      existingUser = byStr
+      checkError = errStr
+      console.log(`По строке: existingUser=`, existingUser, `error=`, checkError)
     }
 
-    console.log(`🔍 existingUser:`, existingUser)
-    if (checkError) console.error('Check error:', checkError)
-
-    // Аватар (без изменений)
+    // Аватар (как у вас, без изменений)
     let avatarUrl = null
     try {
       const photos = await bot.getUserProfilePhotos(userIdNum, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos?.length) {
+      if (photos?.total_count > 0 && photos.photos?.length) {
         const fileId = photos.photos[0][photos.photos[0].length - 1].file_id
         avatarUrl = await bot.getFileLink(fileId)
       }
     } catch (err) {
-      console.warn('Avatar fetch:', err.message)
+      console.warn('Avatar fetch error:', err.message)
     }
 
+    // Если пользователь существует
     if (existingUser) {
       console.log(`✅ User ${userIdNum} already exists`)
       if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
@@ -122,32 +117,40 @@ async function registerUser(msg) {
 
     // Новый пользователь
     const key = generateKey()
-    const { error: insertError } = await supabase
-      .from('users')
-      .insert({
-        name: fullName,
-        idtg: userIdNum,   // сохраняем как число (если поле int8)
-        user_name_tg: username,
-        key: key,
-        total_purchases: 0,
-        role: 'user',
-        avatar_url: avatarUrl
-      })
+    // Пробуем вставить как число (если поле int8). Если ошибка типа — попробуем строку
+    const insertData = {
+      name: fullName,
+      idtg: userIdNum,
+      user_name_tg: username,
+      key: key,
+      total_purchases: 0,
+      role: 'user',
+      avatar_url: avatarUrl
+    }
+    let { error: insertError } = await supabase.from('users').insert(insertData)
+    
+    // Если ошибка "invalid input syntax for type bigint", пробуем строку
+    if (insertError && insertError.message?.includes('invalid input syntax')) {
+      console.log('⚠️ Пробуем вставить idtg как строку')
+      insertData.idtg = userIdStr
+      const { error: retryError } = await supabase.from('users').insert(insertData)
+      insertError = retryError
+    }
 
     if (insertError) {
       if (insertError.code === '23505') {
-        console.warn(`⚠️ Race condition — user ${userIdNum} was just created by another request.`)
+        console.warn(`⚠️ Пользователь ${userIdNum} уже существует (гонка)`)
         return true
       }
-      console.error('Insert error:', insertError)
+      console.error('❌ Ошибка вставки:', insertError)
       return false
     }
 
-    console.log(`🆕 New user registered: ${userIdNum}`)
+    console.log(`🆕 Новый пользователь зарегистрирован: ${userIdNum}, key: ${key}`)
     return true
 
   } catch (error) {
-    console.error('registerUser exception:', error)
+    console.error('❌ Исключение в registerUser:', error)
     return false
   }
 }
