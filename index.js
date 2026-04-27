@@ -63,69 +63,70 @@ function generateKey() {
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
-  const userId = Number(msg.from.id)
+  const userIdRaw = msg.from.id
+  const userIdNum = Number(userIdRaw)
+  const userIdStr = String(userIdRaw)
+  
   const username = msg.from.username ? `@${msg.from.username}` : 'null'
   const firstName = msg.from.first_name || ''
   const lastName = msg.from.last_name || ''
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
-    const { data: existingUser, error: checkError } = await supabase
+    // Пробуем найти пользователя и по числу, и по строке
+    let existingUser = null
+    let checkError = null
+
+    // Сначала пробуем как число (если поле int8)
+    const { data: byNum, error: errNum } = await supabase
       .from('users')
       .select('id, avatar_url')
-      .eq('idtg', userId)
+      .eq('idtg', userIdNum)
       .maybeSingle()
-
-    if (checkError) {
-      console.error('Error checking user:', checkError)
-      return false
+    
+    if (byNum) {
+      existingUser = byNum
+    } else {
+      // Если не нашли — пробуем как строку (если поле text/varchar)
+      const { data: byStr, error: errStr } = await supabase
+        .from('users')
+        .select('id, avatar_url')
+        .eq('idtg', userIdStr)
+        .maybeSingle()
+      if (byStr) existingUser = byStr
+      checkError = errStr || errNum
     }
 
-    // Попробуем получить ссылку на аватар пользователя (если есть)
+    console.log(`🔍 existingUser:`, existingUser)
+    if (checkError) console.error('Check error:', checkError)
+
+    // Аватар (без изменений)
     let avatarUrl = null
     try {
-      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
-        const sizes = photos.photos[0]
-        const bestSize = sizes[sizes.length - 1]
-        const fileId = bestSize.file_id
-        try {
-          avatarUrl = await bot.getFileLink(fileId)
-        } catch (err) {
-          console.warn('Could not get file link for avatar:', err.message || err)
-        }
+      const photos = await bot.getUserProfilePhotos(userIdNum, { limit: 1 })
+      if (photos && photos.total_count > 0 && photos.photos?.length) {
+        const fileId = photos.photos[0][photos.photos[0].length - 1].file_id
+        avatarUrl = await bot.getFileLink(fileId)
       }
     } catch (err) {
-      console.warn('Could not fetch user profile photos:', err.message || err)
+      console.warn('Avatar fetch:', err.message)
     }
 
     if (existingUser) {
-      console.log(`User ${userId} already exists`)
-      // Обновим avatar_url, если он появился или изменился
-      try {
-        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ avatar_url: avatarUrl })
-            .eq('idtg', userId)
-
-          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
-          else console.log(`✅ Updated avatar_url for user ${userId}`)
-        }
-      } catch (err) {
-        console.error('Error updating existing user avatar:', err)
+      console.log(`✅ User ${userIdNum} already exists`)
+      if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
+        await supabase.from('users').update({ avatar_url: avatarUrl }).eq('idtg', userIdNum)
       }
-
       return true
     }
 
+    // Новый пользователь
     const key = generateKey()
-
     const { error: insertError } = await supabase
       .from('users')
       .insert({
         name: fullName,
-        idtg: userId,
+        idtg: userIdNum,   // сохраняем как число (если поле int8)
         user_name_tg: username,
         key: key,
         total_purchases: 0,
@@ -134,21 +135,19 @@ async function registerUser(msg) {
       })
 
     if (insertError) {
-      // Если произошла ошибка дублирования — вероятно гонка или одновременный запрос
-      if (insertError.code === '23505' || (insertError.details && insertError.details.includes('already exists'))) {
-        console.warn(`User ${userId} already exists (insert race). Treating as registered.`)
+      if (insertError.code === '23505') {
+        console.warn(`⚠️ Race condition — user ${userIdNum} was just created by another request.`)
         return true
       }
-
-      console.error('Error creating user:', insertError)
+      console.error('Insert error:', insertError)
       return false
     }
 
-    console.log(`✅ New user registered: ${userId}, key: ${key}`)
+    console.log(`🆕 New user registered: ${userIdNum}`)
     return true
 
   } catch (error) {
-    console.error('Error in registerUser:', error)
+    console.error('registerUser exception:', error)
     return false
   }
 }
