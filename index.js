@@ -33,14 +33,14 @@ const STARS_PRICES = {
 
 const CRYPTO_PRICES = {
   new: {
-    15: 2.30,
-    30: 5.90,
-    365: 47.30
+    15: 3,
+    30: 5,
+    365: 48,
   },
   renew: {
-    15: 3.50,
-    30: 7.00,
-    365: 59.00
+    15: 4,
+    30: 6,
+    365: 65
   }
 }
 
@@ -60,6 +60,7 @@ function generateKey() {
   return key
 }
 
+
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
@@ -70,55 +71,26 @@ async function registerUser(msg) {
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
+    // 1. Ищем пользователя по idtg (запрашиваем только id)
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
-      .select('id, avatar_url')
+      .select('id') 
       .eq('idtg', userId)
-      .single()
+      .limit(1)
+      .maybeSingle()
 
-    if (checkError && checkError.code !== 'PGRST116') {
+    if (checkError) {
       console.error('Error checking user:', checkError)
       return false
     }
 
-    // Попробуем получить ссылку на аватар пользователя (если есть)
-    let avatarUrl = null
-    try {
-      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
-        const sizes = photos.photos[0]
-        const bestSize = sizes[sizes.length - 1]
-        const fileId = bestSize.file_id
-        try {
-          avatarUrl = await bot.getFileLink(fileId)
-        } catch (err) {
-          console.warn('Could not get file link for avatar:', err.message || err)
-        }
-      }
-    } catch (err) {
-      console.warn('Could not fetch user profile photos:', err.message || err)
-    }
-
+    // 2. Если профиль уже есть, просто возвращаем true (дубликат не создаем)
     if (existingUser) {
       console.log(`User ${userId} already exists`)
-      // Обновим avatar_url, если он появился или изменился
-      try {
-        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ avatar_url: avatarUrl, registration_date: existingUser.registration_date || new Date().toISOString().split('T')[0] })
-            .eq('idtg', userId)
-
-          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
-          else console.log(`✅ Updated avatar_url for user ${userId}`)
-        }
-      } catch (err) {
-        console.error('Error updating existing user avatar:', err)
-      }
-
       return true
     }
 
+    // 3. Если профиля нет, генерируем ключ и записываем в базу
     const key = generateKey()
 
     const { error: insertError } = await supabase
@@ -126,13 +98,10 @@ async function registerUser(msg) {
       .insert({
         name: fullName,
         idtg: userId,
-        telegram: username,
+        user_name_tg: username,
         key: key,
-        status: 'pending',
-        buykov: 0,
+        total_purchases: 0,
         role: 'user',
-        registration_date: new Date().toISOString().split('T')[0],
-        avatar_url: avatarUrl
       })
 
     if (insertError) {
@@ -410,6 +379,8 @@ bot.onText(/\/start/, async (msg) => {
   }
 })
 
+
+
 bot.onText(/\/adm/, async (msg) => {
   if (!isPrivateChat(msg)) return
 
@@ -479,6 +450,96 @@ bot.on('callback_query', async (callbackQuery) => {
   } catch (error) {
     console.error('Error in callback:', error)
     await bot.answerCallbackQuery(callbackQuery.id, { text: 'Произошла ошибка' })
+  }
+})
+
+// === Обработка команды /nt (Уведомления) ===
+bot.onText(/\/nt(?:\s+(.*))?/, async (msg, match) => {
+  if (!isPrivateChat(msg)) return;
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  // Проверка на админа
+  if (!ADMIN_IDS.includes(userId)) {
+      return bot.sendMessage(chatId, 'У вас нет прав для использования этой команды.', { parse_mode: 'Markdown' });
+  }
+
+  const args = match[1] ? match[1].trim() : ''; 
+  
+  // Если просто написали /nt без текста — показываем инструкцию
+  if (!args) {
+      return bot.sendMessage(chatId, 
+          `*Система уведомлений*\n\n` +
+          `*Форматы:*\n` +
+          `\`/nt -all Ваш текст\` — отправить всем\n` +
+          `\`/nt КЛЮЧ Ваш текст\` — отправить одному\n\n` +
+          `*Пример:*\n` +
+          `\`/nt -all Доступно новое обновление!\``, 
+          { parse_mode: 'Markdown' }
+      );
+  }
+
+  const firstSpaceIndex = args.indexOf(' ');
+  if (firstSpaceIndex === -1) {
+      return bot.sendMessage(chatId, '*Ошибка формата*\nВы забыли указать текст уведомления.', { parse_mode: 'Markdown' });
+  }
+
+  let target = args.substring(0, firstSpaceIndex).trim();
+  const messageText = args.substring(firstSpaceIndex + 1).trim();
+
+  if (target === '-all') target = 'all';
+
+  // Отправляем сообщение "В процессе..."
+  const statusMsg = await bot.sendMessage(chatId, `*Отправка уведомления...*\nПолучатель: \`${target}\``, { parse_mode: 'Markdown' });
+
+  try {
+      const SERVER_API_URL = 'https://mr-studio-mr-studios.hf.space/api/notify';
+      
+      const response = await fetch(SERVER_API_URL, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+              token: process.env.MY_API_TOKEN,
+              target: target,
+              message: messageText
+          })
+      });
+
+      const data = await response.json();
+
+      // Если сервер ответил успешно
+      if (data.status) {
+          await bot.editMessageText(
+              `*Уведомление успешно отправлено!*\n\n` +
+              `*Кому:* \`${target}\`\n` +
+              `*Текст:* _${messageText}_`, 
+              { 
+                  chat_id: chatId, 
+                  message_id: statusMsg.message_id,
+                  parse_mode: 'Markdown' 
+              }
+          );
+      } else {
+          // Если сервер выдал ошибку (например, неверный ключ)
+          await bot.editMessageText(
+              `*Ошибка:*\n${data.message}`, 
+              { 
+                  chat_id: chatId, 
+                  message_id: statusMsg.message_id,
+                  parse_mode: 'Markdown' 
+              }
+          );
+      }
+
+  } catch (error) {
+      console.error('Ошибка при отправке /nt:', error);
+      await bot.editMessageText('*Системная ошибка*\nПроизошла ошибка при связи с сервером.', { 
+          chat_id: chatId, 
+          message_id: statusMsg.message_id,
+          parse_mode: 'Markdown'
+      });
   }
 })
 
@@ -1053,6 +1114,6 @@ app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`✅ Server listening on port ${PORT}`))
+app.listen(PORT, '0.0.0.0', () => console.log(`✅ Servers listening on port ${PORT}`))
 
 console.log('✅ Bot is ready and waiting for messages')
