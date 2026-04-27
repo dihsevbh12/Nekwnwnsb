@@ -63,59 +63,63 @@ function generateKey() {
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
-  const userId = msg.from.id
+  const userId = Number(msg.from.id)
   const username = msg.from.username ? `@${msg.from.username}` : 'null'
   const firstName = msg.from.first_name || ''
   const lastName = msg.from.last_name || ''
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
-    console.log(`🔍 Checking existence for user ${userId}`)
-    
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id, avatar_url')
       .eq('idtg', userId)
-      .maybeSingle() // вместо .single()
+      .maybeSingle()
 
     if (checkError) {
-      console.error('❌ Error checking user:', checkError)
+      console.error('Error checking user:', checkError)
       return false
     }
 
-    console.log(`📦 Existing user data:`, existingUser)
-
-    // Получаем аватарку (если есть)
+    // Попробуем получить ссылку на аватар пользователя (если есть)
     let avatarUrl = null
     try {
       const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos?.length > 0) {
+      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
         const sizes = photos.photos[0]
         const bestSize = sizes[sizes.length - 1]
         const fileId = bestSize.file_id
-        avatarUrl = await bot.getFileLink(fileId)
+        try {
+          avatarUrl = await bot.getFileLink(fileId)
+        } catch (err) {
+          console.warn('Could not get file link for avatar:', err.message || err)
+        }
       }
     } catch (err) {
-      console.warn('Could not fetch avatar:', err.message)
+      console.warn('Could not fetch user profile photos:', err.message || err)
     }
 
     if (existingUser) {
-      console.log(`✅ User ${userId} already exists`)
-      // Обновим аватар, если изменился
-      if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-        const { error: updateErr } = await supabase
-          .from('users')
-          .update({ avatar_url: avatarUrl })
-          .eq('idtg', userId)
-        if (updateErr) console.error('Error updating avatar:', updateErr)
-        else console.log(`✅ Avatar updated for ${userId}`)
+      console.log(`User ${userId} already exists`)
+      // Обновим avatar_url, если он появился или изменился
+      try {
+        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ avatar_url: avatarUrl })
+            .eq('idtg', userId)
+
+          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
+          else console.log(`✅ Updated avatar_url for user ${userId}`)
+        }
+      } catch (err) {
+        console.error('Error updating existing user avatar:', err)
       }
+
       return true
     }
 
-    // Новый пользователь
     const key = generateKey()
-    console.log(`🆕 Creating new user ${userId} with key ${key}`)
 
     const { error: insertError } = await supabase
       .from('users')
@@ -130,15 +134,21 @@ async function registerUser(msg) {
       })
 
     if (insertError) {
-      console.error('❌ Error creating user:', insertError)
+      // Если произошла ошибка дублирования — вероятно гонка или одновременный запрос
+      if (insertError.code === '23505' || (insertError.details && insertError.details.includes('already exists'))) {
+        console.warn(`User ${userId} already exists (insert race). Treating as registered.`)
+        return true
+      }
+
+      console.error('Error creating user:', insertError)
       return false
     }
 
-    console.log(`✅ New user registered: ${userId}`)
+    console.log(`✅ New user registered: ${userId}, key: ${key}`)
     return true
 
   } catch (error) {
-    console.error('❌ Exception in registerUser:', error)
+    console.error('Error in registerUser:', error)
     return false
   }
 }
