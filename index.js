@@ -63,94 +63,92 @@ function generateKey() {
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
-  const userIdNum = msg.from.id
-  const userIdStr = String(userIdNum)
+  const userId = Number(msg.from.id)
   const username = msg.from.username ? `@${msg.from.username}` : 'null'
   const firstName = msg.from.first_name || ''
   const lastName = msg.from.last_name || ''
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
-    console.log(`🔍 Поиск пользователя: число=${userIdNum}, строка=${userIdStr}`)
-
-    // Пробуем найти по числу (если поле int8)
-    let { data: existingUser, error: checkError } = await supabase
+    const { data: existingUser, error: checkError } = await supabase
       .from('users')
       .select('id, avatar_url')
-      .eq('idtg', userIdNum)
+      .eq('idtg', String(userId))
       .maybeSingle()
 
-    console.log(`По числу: existingUser=`, existingUser, `error=`, checkError)
-
-    // Если не нашли — пробуем по строке (если поле text)
-    if (!existingUser && !checkError) {
-      const { data: byStr, error: errStr } = await supabase
-        .from('users')
-        .select('id, avatar_url')
-        .eq('idtg', userIdStr)
-        .maybeSingle()
-      existingUser = byStr
-      checkError = errStr
-      console.log(`По строке: existingUser=`, existingUser, `error=`, checkError)
-    }
-
-    // Аватар (как у вас, без изменений)
-    let avatarUrl = null
-    try {
-      const photos = await bot.getUserProfilePhotos(userIdNum, { limit: 1 })
-      if (photos?.total_count > 0 && photos.photos?.length) {
-        const fileId = photos.photos[0][photos.photos[0].length - 1].file_id
-        avatarUrl = await bot.getFileLink(fileId)
-      }
-    } catch (err) {
-      console.warn('Avatar fetch error:', err.message)
-    }
-
-    // Если пользователь существует
-    if (existingUser) {
-      console.log(`✅ User ${userIdNum} already exists`)
-      if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-        await supabase.from('users').update({ avatar_url: avatarUrl }).eq('idtg', userIdNum)
-      }
-      return true
-    }
-
-    // Новый пользователь
-    const key = generateKey()
-    // Пробуем вставить как число (если поле int8). Если ошибка типа — попробуем строку
-    const insertData = {
-      name: fullName,
-      idtg: userIdNum,
-      user_name_tg: username,
-      key: key,
-      total_purchases: 0,
-      role: 'user',
-      avatar_url: avatarUrl
-    }
-    let { error: insertError } = await supabase.from('users').insert(insertData)
-    
-    // Если ошибка "invalid input syntax for type bigint", пробуем строку
-    if (insertError && insertError.message?.includes('invalid input syntax')) {
-      console.log('⚠️ Пробуем вставить idtg как строку')
-      insertData.idtg = userIdStr
-      const { error: retryError } = await supabase.from('users').insert(insertData)
-      insertError = retryError
-    }
-
-    if (insertError) {
-      if (insertError.code === '23505') {
-        console.warn(`⚠️ Пользователь ${userIdNum} уже существует (гонка)`)
-        return true
-      }
-      console.error('❌ Ошибка вставки:', insertError)
+    if (checkError) {
+      console.error('Error checking user:', checkError)
       return false
     }
 
-    console.log(`🆕 Новый пользователь зарегистрирован: ${userIdNum}, key: ${key}`)
+    // Попробуем получить ссылку на аватар пользователя (если есть)
+    let avatarUrl = null
+    try {
+      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
+      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
+        const sizes = photos.photos[0]
+        const bestSize = sizes[sizes.length - 1]
+        const fileId = bestSize.file_id
+        try {
+          avatarUrl = await bot.getFileLink(fileId)
+        } catch (err) {
+          console.warn('Could not get file link for avatar:', err.message || err)
+        }
+      }
+    } catch (err) {
+      console.warn('Could not fetch user profile photos:', err.message || err)
+    }
+
+    if (existingUser) {
+      console.log(`User ${userId} already exists`)
+      // Обновим avatar_url, если он появился или изменился
+      try {
+        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ avatar_url: avatarUrl })
+            .eq('idtg', String(userId))
+
+          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
+          else console.log(`✅ Updated avatar_url for user ${userId}`)
+        }
+      } catch (err) {
+        console.error('Error updating existing user avatar:', err)
+      }
+
+      return true
+    }
+
+    const key = generateKey()
+
+    const { error: insertError } = await supabase
+      .from('users')
+      .insert({
+        name: fullName,
+        idtg: userId,
+        user_name_tg: username,
+        key: key,
+        total_purchases: 0,
+        role: 'user',
+        avatar_url: avatarUrl
+      })
+
+    if (insertError) {
+      // Если произошла ошибка дублирования — вероятно гонка или одновременный запрос
+      if (insertError.code === '23505' || (insertError.details && insertError.details.includes('already exists'))) {
+        console.warn(`User ${userId} already exists (insert race). Treating as registered.`)
+        return true
+      }
+
+      console.error('Error creating user:', insertError)
+      return false
+    }
+
+    console.log(`✅ New user registered: ${userId}, key: ${key}`)
     return true
 
   } catch (error) {
-    console.error('❌ Исключение в registerUser:', error)
+    console.error('Error in registerUser:', error)
     return false
   }
 }
@@ -597,7 +595,7 @@ async function saveSupportChoice(chatId, userId, topic) {
     const { data: user, error } = await supabase
       .from('users')
       .select('telegram, name')
-      .eq('idtg', userId)
+      .eq('idtg', String(userId))
       .single()
 
     const username = user?.telegram || 'null'
@@ -649,7 +647,7 @@ async function handleMediaMessage(msg, mediaType) {
     const { data: user } = await supabase
       .from('users')
       .select('id')
-      .eq('idtg', userId)
+      .eq('idtg', String(userId))
       .single()
 
     if (!user) {
@@ -935,7 +933,7 @@ bot.on('message', async (msg) => {
       const { data: userData, error: fetchError } = await supabase
         .from('users')
         .select('daysgov')
-        .eq('idtg', userId)
+        .eq('idtg', String(userId))
         .single()
 
       if (fetchError) throw fetchError
@@ -962,7 +960,7 @@ bot.on('message', async (msg) => {
           buykov: amount,
           status: 'active'
         })
-        .eq('idtg', userId)
+        .eq('idtg', String(userId))
 
       if (updateError) throw updateError
 
@@ -998,7 +996,7 @@ bot.on('message', async (msg) => {
     const { data: user, error: userError } = await supabase
       .from('users')
       .select('id')
-      .eq('idtg', userId)
+      .eq('idtg', String(userId))
       .single()
 
     if (userError && userError.code !== 'PGRST116') {
