@@ -74,9 +74,10 @@ async function registerUser(msg) {
       .from('users')
       .select('id, avatar_url')
       .eq('idtg', userId)
-      .single()
+      .limit(1)
+      .maybeSingle()
 
-    if (checkError && checkError.code !== 'PGRST116') {
+    if (checkError) {
       console.error('Error checking user:', checkError)
       return false
     }
