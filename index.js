@@ -60,6 +60,7 @@ function generateKey() {
   return key
 }
 
+
 // === Функция регистрации пользователя ===
 async function registerUser(msg) {
   const chatId = msg.chat.id
@@ -70,9 +71,10 @@ async function registerUser(msg) {
   const fullName = `${firstName} ${lastName}`.trim() || null
 
   try {
+    // 1. Ищем пользователя по idtg (запрашиваем только id)
     const { data: existingUser, error: checkError } = await supabase
       .from('users')
-      .select('id, avatar_url')
+      .select('id') 
       .eq('idtg', userId)
       .limit(1)
       .maybeSingle()
@@ -82,44 +84,13 @@ async function registerUser(msg) {
       return false
     }
 
-    // Попробуем получить ссылку на аватар пользователя (если есть)
-    let avatarUrl = null
-    try {
-      const photos = await bot.getUserProfilePhotos(userId, { limit: 1 })
-      if (photos && photos.total_count > 0 && photos.photos && photos.photos.length > 0) {
-        const sizes = photos.photos[0]
-        const bestSize = sizes[sizes.length - 1]
-        const fileId = bestSize.file_id
-        try {
-          avatarUrl = await bot.getFileLink(fileId)
-        } catch (err) {
-          console.warn('Could not get file link for avatar:', err.message || err)
-        }
-      }
-    } catch (err) {
-      console.warn('Could not fetch user profile photos:', err.message || err)
-    }
-
+    // 2. Если профиль уже есть, просто возвращаем true (дубликат не создаем)
     if (existingUser) {
       console.log(`User ${userId} already exists`)
-      // Обновим avatar_url, если он появился или изменился
-      try {
-        if (avatarUrl && existingUser.avatar_url !== avatarUrl) {
-          const { error: updateErr } = await supabase
-            .from('users')
-            .update({ avatar_url: avatarUrl, registration_date: existingUser.registration_date || new Date().toISOString().split('T')[0] })
-            .eq('idtg', userId)
-
-          if (updateErr) console.error('Error updating avatar_url for existing user:', updateErr)
-          else console.log(`✅ Updated avatar_url for user ${userId}`)
-        }
-      } catch (err) {
-        console.error('Error updating existing user avatar:', err)
-      }
-
       return true
     }
 
+    // 3. Если профиля нет, генерируем ключ и записываем в базу
     const key = generateKey()
 
     const { error: insertError } = await supabase
