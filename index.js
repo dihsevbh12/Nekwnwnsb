@@ -231,12 +231,13 @@ function showSupportMenu(chatId) {
 app.post('/api/create-stars-invoice', async (req, res) => {
   console.log('🔐 TOKEN exists:', !!process.env.CRYPTO_BOT_TOKEN)
   try {
-    const { plan, isRenewal, userId } = req.body
+    const { plan, isRenewal, userId, product } = req.body
 
     if (!plan || !userId) {
       return res.status(400).json({ success: false, message: 'Invalid data' })
     }
 
+    const productKey = product === 'admin' ? 'admin' : 'gov'
     const type = isRenewal ? 'renew' : 'new'
     const price = STARS_PRICES[type]?.[plan]
 
@@ -244,14 +245,18 @@ app.post('/api/create-stars-invoice', async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid plan' })
     }
 
-    const title = `Подписка на ${plan} дней`
-    const description = isRenewal ? 'Продление доступа Government' : 'Покупка доступа Government'
+    const productLabel = productKey === 'admin' ? 'Admin Helper' : 'GOV Helper'
+    const title = `${productLabel} — подписка на ${plan} дней`
+    const description = isRenewal
+      ? `Продление доступа ${productLabel}`
+      : `Покупка доступа ${productLabel}`
 
     const payload = JSON.stringify({
       userId: userId,
       plan: plan,
       type: type,
-      isRenewal: isRenewal
+      isRenewal: isRenewal,
+      product: productKey
     })
 
     const invoiceLink = await bot.createInvoiceLink(
@@ -276,18 +281,21 @@ app.post('/api/create-stars-invoice', async (req, res) => {
 app.post('/api/create-crypto-invoice', async (req, res) => {
   console.log('📥 /create-crypto-invoice', req.body)
   try {
-    const { plan, isRenewal, userId } = req.body
+    const { plan, isRenewal, userId, product } = req.body
 
     if (!plan || !userId) {
       return res.status(400).json({ ok: false, message: 'Invalid data' })
     }
 
+    const productKey = product === 'admin' ? 'admin' : 'gov'
     const type = isRenewal ? 'renew' : 'new'
     const price = CRYPTO_PRICES[type]?.[plan]
 
     if (!price) {
       return res.status(400).json({ ok: false, message: 'Invalid plan' })
     }
+
+    const productLabel = productKey === 'admin' ? 'Admin Helper' : 'GOV Helper'
 
     // CryptoBot не любит много нулей, но любит строки
     const amountString = price.toString();
@@ -313,8 +321,8 @@ app.post('/api/create-crypto-invoice', async (req, res) => {
       body: JSON.stringify({
         asset: 'USDT', // Убедитесь, что в приложении CryptoBot включен кошелек USDT
         amount: amountString,
-        description: `Подписка на ${plan} дней`,
-        payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}`,
+        description: `${productLabel} — подписка на ${plan} дней`,
+        payload: `uid:${userId}|plan:${plan}|renew:${isRenewal}|product:${productKey}`,
         allow_anonymous: false,
         expires_in: 900
       })
@@ -920,51 +928,70 @@ bot.on('message', async (msg) => {
     }
 
     const { userId, plan, isRenewal } = payloadData
+    const productKey = payloadData.product === 'admin' ? 'admin' : 'gov'
+    const productLabel = productKey === 'admin' ? 'Admin Helper' : 'GOV Helper'
+    const daysField = productKey === 'admin' ? 'admhelper_days' : 'govhelper_days'
+    const issuedField = productKey === 'admin' ? 'admhelper_issued' : 'govhelper_issued'
 
-    console.log(`💰 Payment received: User ${userId}, Plan ${plan} days, Amount ${amount} ${currency}`)
+    console.log(`💰 Payment received: User ${userId}, ${productLabel}, Plan ${plan} days, Amount ${amount} ${currency}`)
 
     try {
-      const { data: userData, error: fetchError } = await supabase
+      const { data: userRow, error: fetchError } = await supabase
         .from('users')
-        .select('daysgov')
+        .select(`${daysField}, total_purchases`)
         .eq('idtg', userId)
         .single()
 
-      if (fetchError) throw fetchError
+      if (fetchError && fetchError.code !== 'PGRST116') throw fetchError
 
       const today = new Date()
       today.setHours(0, 0, 0, 0)
 
-      let startDate = today
-      if (userData && userData.daysgov) {
-        const currentExpiry = new Date(userData.daysgov)
-        if (currentExpiry > today) {
-          startDate = currentExpiry
-        }
+      // Идемпотентность: фронтенд miniapp обычно успевает обновить дату
+      // первым через activateSubscription. Пересчитываем целевую дату от
+      // (today | currentExpiry) и пишем только если текущее значение
+      // меньше целевого — иначе пропускаем, чтобы не было двойного кредита.
+      const currentExpiryStr = userRow ? userRow[daysField] : null
+      let baseDate = today
+      if (currentExpiryStr) {
+        const currentExpiry = new Date(currentExpiryStr)
+        if (currentExpiry > today) baseDate = currentExpiry
+      }
+      const expectedNewDate = new Date(baseDate)
+      expectedNewDate.setDate(expectedNewDate.getDate() + parseInt(plan))
+
+      const alreadyApplied = currentExpiryStr && new Date(currentExpiryStr) >= expectedNewDate
+      const newExpiryString = alreadyApplied
+        ? currentExpiryStr
+        : expectedNewDate.toISOString().split('T')[0]
+
+      if (!alreadyApplied) {
+        const newPurchases = (userRow?.total_purchases || 0) + 1
+        const { error: updateError } = await supabase
+          .from('users')
+          .update({
+            [daysField]: newExpiryString,
+            [issuedField]: 'Telegram Stars',
+            total_purchases: newPurchases
+          })
+          .eq('idtg', userId)
+        if (updateError) throw updateError
+        console.log(`✅ Bot credited ${plan} days of ${productLabel} to ${userId}`)
+      } else {
+        console.log(`ℹ️ Subscription already credited by miniapp for ${userId}, bot skipped DB update`)
       }
 
-      const newDate = new Date(startDate)
-      newDate.setDate(newDate.getDate() + parseInt(plan))
-      const newExpiryString = newDate.toISOString().split('T')[0]
-
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ 
-          daysgov: newExpiryString,
-          buykov: amount,
-          status: 'active'
-        })
-        .eq('idtg', userId)
-
-      if (updateError) throw updateError
-
-      await bot.sendMessage(msg.chat.id, 
-        `✅ *Оплата прошла успешно!*\n\nВаша подписка продлена на *${plan} дней*.\nДействует до: ${new Date(newExpiryString).toLocaleDateString('ru-RU')}`, 
+      await bot.sendMessage(msg.chat.id,
+        `✅ *Оплата прошла успешно!*\n\nПодписка *${productLabel}* активирована на *${plan} дней*.\nДействует до: ${new Date(newExpiryString).toLocaleDateString('ru-RU')}`,
         { parse_mode: 'Markdown' }
       )
 
       for (const adminId of ADMIN_IDS) {
-        bot.sendMessage(adminId, `💰 *Новая продажа (Stars)*\nUser ID: ${userId}\nPlan: ${plan} days\nAmount: ${amount} XTR`, { parse_mode: 'Markdown' })
+        bot.sendMessage(
+          adminId,
+          `💰 *Новая продажа (Stars)*\nПродукт: ${productLabel}\nUser ID: ${userId}\nPlan: ${plan} days\nAmount: ${amount} XTR`,
+          { parse_mode: 'Markdown' }
+        )
       }
 
     } catch (error) {
